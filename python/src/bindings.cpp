@@ -30,6 +30,7 @@ void initParameterSingleton() {
 
 // Forward declarations of init functions from other files
 void init_structure(py::module &m);
+void init_alignment(py::module &m);
 
 PYBIND11_MODULE(pyfoldseek, m) {
     m.doc() = R"pbdoc(
@@ -48,13 +49,21 @@ PYBIND11_MODULE(pyfoldseek, m) {
             >>> from pyfoldseek import Structure
             >>> struct = Structure.from_file("protein.pdb")
             >>> print(struct.seq_3di)
+
+            >>> # TM-align example
+            >>> from pyfoldseek import compute_tmscore
+            >>> s1 = Structure.from_file("protein1.pdb")
+            >>> s2 = Structure.from_file("protein2.pdb")
+            >>> result = compute_tmscore(s1.ca_coords, s2.ca_coords, s1.sequence, s2.sequence)
+            >>> print(f"TM-score: {result.tmscore:.3f}")
     )pbdoc";
 
     // Add version
-    m.attr("__version__") = "0.1.0";
+    m.attr("__version__") = "0.2.0";
 
     // Initialize submodules
     init_structure(m);
+    init_alignment(m);
 
 #ifdef VERSION_INFO
     m.attr("__version__") = VERSION_INFO;

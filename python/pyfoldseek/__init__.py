@@ -9,6 +9,8 @@ Main classes and functions:
 - Chain: Individual chain within a structure
 - coords_to_3di: Convert coordinates to 3Di alphabet
 - batch_convert: Process multiple structures in parallel
+- TMaligner: TM-align structural alignment
+- compute_tmscore: Compute TM-score between structures
 
 Example usage:
     >>> from pyfoldseek import Structure
@@ -20,9 +22,12 @@ Example usage:
     >>> for chain in struct:
     >>>     print(f"{chain.name}: {chain.seq_3di}")
     >>>
-    >>> # Batch processing
-    >>> from pyfoldseek import batch_convert
-    >>> structures = batch_convert(["p1.pdb", "p2.pdb", "p3.pdb"])
+    >>> # TM-align
+    >>> from pyfoldseek import compute_tmscore
+    >>> s1 = Structure.from_file("protein1.pdb")
+    >>> s2 = Structure.from_file("protein2.pdb")
+    >>> result = compute_tmscore(s1.ca_coords, s2.ca_coords, s1.sequence, s2.sequence)
+    >>> print(f"TM-score: {result.tmscore:.3f}")
 """
 
 from ._version import __version__
@@ -35,6 +40,9 @@ try:
         Vec3,
         coords_to_3di,
         batch_convert,
+        TMaligner,
+        TMscoreResult,
+        compute_tmscore,
         __version__ as _cpp_version,
     )
 except ImportError as e:
@@ -50,5 +58,8 @@ __all__ = [
     "Vec3",
     "coords_to_3di",
     "batch_convert",
+    "TMaligner",
+    "TMscoreResult",
+    "compute_tmscore",
     "__version__",
 ]
