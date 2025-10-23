@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <iostream>
 
 #include "GemmiWrapper.h"
 #include "structureto3di.h"
@@ -14,7 +15,7 @@ namespace py = pybind11;
 
 // Helper function to convert std::vector<Vec3> to NumPy array
 py::array_t<double> vec3_to_numpy(const std::vector<Vec3>& coords) {
-    auto result = py::array_t<double>({coords.size(), 3});
+    auto result = py::array_t<double>(std::vector<ptrdiff_t>{static_cast<ptrdiff_t>(coords.size()), 3});
     auto buf = result.mutable_unchecked<2>();
     for (size_t i = 0; i < coords.size(); i++) {
         buf(i, 0) = coords[i].x;
@@ -163,8 +164,8 @@ public:
                 }
 
                 if (needs_reconstruction) {
-                    pulchra.recFromCAlphaTrace(&gemmi.ca[start], &gemmi.n[start],
-                                              &gemmi.c[start], len);
+                    pulchra.rebuildBackbone(&gemmi.ca[start], &gemmi.n[start],
+                                           &gemmi.c[start], &gemmi.ami[start], len);
                 }
             }
 
