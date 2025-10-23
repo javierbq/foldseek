@@ -2,7 +2,7 @@
 
 ## Critical Issue: Multiple Structure Loading
 
-**Status**: ❌ **UNRESOLVED**
+**Status**: ❌ **PARTIALLY ADDRESSED** (Deeper investigation needed)
 
 **Problem**: Segmentation fault occurs when loading a second structure after the first one.
 
@@ -67,6 +67,28 @@ python -c "from pyfoldseek import Structure; s = Structure.from_file('file1.pdb'
 python -c "from pyfoldseek import Structure; s = Structure.from_file('file2.pdb'); print(s.seq_3di)"
 ```
 
+### Investigation Results (2025-10-23)
+
+Multiple approaches were attempted to fix the segfault:
+
+1. **✓ Fixed batch_convert Python callback**:
+   - Changed batch_convert to directly instantiate PyStructure instead of calling back into Python
+   - Added proper GIL management
+   - Result: Improved but segfault persists
+
+2. **✓ Tried removing static StructureTo3Di converter**:
+   - Changed to creating new converter per structure
+   - Result: Segfault persists
+
+3. **✓ Verified GemmiWrapper clears vectors**:
+   - Confirmed that updateStructure() properly clears ca, n, c, cb, ami vectors
+   - Result: Not the issue
+
+4. **Conclusion**: The segfault appears to be in the gemmi library itself or how it interacts with the file system when loading a second file. Further investigation would require:
+   - Deep debugging with gdb/valgrind
+   - Potentially patching the gemmi library
+   - Testing with standalone C++ code (outside Python bindings)
+
 ### Next Steps for Debugging
 
 1. **Use gdb/valgrind** to get exact crash location:
@@ -76,13 +98,13 @@ python -c "from pyfoldseek import Structure; s = Structure.from_file('file2.pdb'
    > bt  # backtrace after crash
    ```
 
-2. **Check gemmi library**:
-   - Look for static variables in GemmiWrapper
-   - Check if gemmi has initialization requirements
+2. **Test with minimal C++ example**:
+   - Create standalone C++ test program that loads two structures
+   - Determine if issue is in gemmi library or Python bindings
 
-3. **Test with minimal example**:
-   - Create C++ test program that loads two structures
-   - See if issue is in Python bindings or underlying C++ code
+3. **Check gemmi library version**:
+   - Verify we're using the latest version
+   - Check gemmi issue tracker for similar problems
 
 4. **Memory debugging**:
    ```bash

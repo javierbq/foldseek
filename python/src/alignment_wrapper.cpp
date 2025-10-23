@@ -12,6 +12,7 @@
 
 #include "TMaligner.h"
 #include "structureto3di.h"
+#include "LDDT.h"
 
 namespace py = pybind11;
 
@@ -226,6 +227,174 @@ PyTMscoreResult compute_tmscore(py::array_t<double> ca1,
     return aligner.align(ca1, ca2, seq1, seq2);
 }
 
+/**
+ * Python wrapper for LDDTScoreResult
+ */
+class PyLDDTResult {
+public:
+    PyLDDTResult(const LDDTCalculator::LDDTScoreResult& result)
+        : average_lddt(result.avgLddtScore), length(result.scoreLength) {
+        // Copy per-residue scores
+        per_residue_scores.resize(result.scoreLength);
+        for (int i = 0; i < result.scoreLength; i++) {
+            per_residue_scores[i] = result.perCaLddtScore[i];
+        }
+    }
+
+    double get_average() const { return average_lddt; }
+    int get_length() const { return length; }
+
+    py::array_t<float> get_per_residue() const {
+        auto result = py::array_t<float>(per_residue_scores.size());
+        auto buf = result.mutable_unchecked<1>();
+        for (size_t i = 0; i < per_residue_scores.size(); i++) {
+            buf(i) = per_residue_scores[i];
+        }
+        return result;
+    }
+
+    std::string repr() const {
+        char buffer[256];
+        snprintf(buffer, sizeof(buffer),
+                "<LDDTResult average=%.3f length=%d>",
+                average_lddt, length);
+        return std::string(buffer);
+    }
+
+private:
+    double average_lddt;
+    int length;
+    std::vector<float> per_residue_scores;
+};
+
+/**
+ * Python wrapper for LDDTCalculator
+ */
+class PyLDDTCalculator {
+public:
+    PyLDDTCalculator(unsigned int max_query_len = 50000,
+                     unsigned int max_target_len = 50000)
+        : max_query_len_(max_query_len), max_target_len_(max_target_len) {
+        calculator_ = new LDDTCalculator(max_query_len, max_target_len);
+    }
+
+    ~PyLDDTCalculator() {
+        delete calculator_;
+        if (query_x_) delete[] query_x_;
+        if (query_y_) delete[] query_y_;
+        if (query_z_) delete[] query_z_;
+    }
+
+    /**
+     * Compute LDDT score between two aligned structures
+     *
+     * Parameters:
+     *   query_ca: Query CA coordinates (N1, 3)
+     *   target_ca: Target CA coordinates (N2, 3)
+     *   alignment: CIGAR string representing the alignment (M=match, I=insertion, D=deletion)
+     *   query_start: Start position in query (default: 0)
+     *   target_start: Start position in target (default: 0)
+     *
+     * Returns:
+     *   PyLDDTResult with average LDDT and per-residue scores
+     */
+    PyLDDTResult compute_lddt(py::array_t<double> query_ca,
+                              py::array_t<double> target_ca,
+                              const std::string& alignment,
+                              int query_start = 0,
+                              int target_start = 0) {
+        // Validate inputs
+        if (query_ca.ndim() != 2 || query_ca.shape(1) != 3) {
+            throw std::invalid_argument("Query CA coordinates must be (N, 3) array");
+        }
+        if (target_ca.ndim() != 2 || target_ca.shape(1) != 3) {
+            throw std::invalid_argument("Target CA coordinates must be (N, 3) array");
+        }
+
+        size_t query_len = query_ca.shape(0);
+        size_t target_len = target_ca.shape(0);
+
+        if (query_len > max_query_len_) {
+            throw std::invalid_argument("Query length exceeds max_query_len");
+        }
+        if (target_len > max_target_len_) {
+            throw std::invalid_argument("Target length exceeds max_target_len");
+        }
+
+        // Allocate arrays for query if needed
+        if (!query_x_) {
+            query_x_ = new float[max_query_len_];
+            query_y_ = new float[max_query_len_];
+            query_z_ = new float[max_query_len_];
+        }
+
+        // Allocate arrays for target
+        float* target_x = new float[target_len];
+        float* target_y = new float[target_len];
+        float* target_z = new float[target_len];
+
+        // Copy data from NumPy arrays
+        auto query_r = query_ca.unchecked<2>();
+        auto target_r = target_ca.unchecked<2>();
+
+        for (size_t i = 0; i < query_len; i++) {
+            query_x_[i] = query_r(i, 0);
+            query_y_[i] = query_r(i, 1);
+            query_z_[i] = query_r(i, 2);
+        }
+
+        for (size_t i = 0; i < target_len; i++) {
+            target_x[i] = target_r(i, 0);
+            target_y[i] = target_r(i, 1);
+            target_z[i] = target_r(i, 2);
+        }
+
+        // Initialize query structure
+        calculator_->initQuery(query_len, query_x_, query_y_, query_z_);
+
+        // Compute LDDT score
+        LDDTCalculator::LDDTScoreResult result = calculator_->computeLDDTScore(
+            target_len, query_start, target_start, alignment,
+            target_x, target_y, target_z
+        );
+
+        // Clean up
+        delete[] target_x;
+        delete[] target_y;
+        delete[] target_z;
+
+        return PyLDDTResult(result);
+    }
+
+    std::string repr() const {
+        char buffer[128];
+        snprintf(buffer, sizeof(buffer),
+                "<LDDTCalculator max_query_len=%u max_target_len=%u>",
+                max_query_len_, max_target_len_);
+        return std::string(buffer);
+    }
+
+private:
+    LDDTCalculator* calculator_;
+    unsigned int max_query_len_;
+    unsigned int max_target_len_;
+    float* query_x_ = nullptr;
+    float* query_y_ = nullptr;
+    float* query_z_ = nullptr;
+};
+
+// Helper function for simple LDDT computation
+PyLDDTResult compute_lddt(py::array_t<double> ca1,
+                          py::array_t<double> ca2,
+                          const std::string& alignment,
+                          int query_start = 0,
+                          int target_start = 0) {
+    unsigned int max_len1 = ca1.shape(0);
+    unsigned int max_len2 = ca2.shape(0);
+    PyLDDTCalculator calculator(max_len1, max_len2);
+    return calculator.compute_lddt(ca1, ca2, alignment, query_start, target_start);
+}
+
 void init_alignment(py::module &m) {
     // TMscoreResult class
     py::class_<PyTMscoreResult>(m, "TMscoreResult", R"pbdoc(
@@ -334,5 +503,123 @@ void init_alignment(py::module &m) {
         >>> s2 = Structure.from_file("protein2.pdb")
         >>> result = compute_tmscore(s1.ca_coords, s2.ca_coords, s1.sequence, s2.sequence)
         >>> print(f"TM-score: {result.tmscore:.3f}")
+    )pbdoc");
+
+    // LDDTResult class
+    py::class_<PyLDDTResult>(m, "LDDTResult", R"pbdoc(
+        Result of LDDT calculation.
+
+        Contains average LDDT score and per-residue LDDT scores.
+    )pbdoc")
+        .def_property_readonly("average", &PyLDDTResult::get_average,
+                             "Average LDDT score (0-1, higher is better)")
+        .def_property_readonly("length", &PyLDDTResult::get_length,
+                             "Number of aligned residues")
+        .def_property_readonly("per_residue", &PyLDDTResult::get_per_residue,
+                             "Per-residue LDDT scores as NumPy array")
+        .def("__repr__", &PyLDDTResult::repr);
+
+    // LDDTCalculator class
+    py::class_<PyLDDTCalculator>(m, "LDDTCalculator", R"pbdoc(
+        LDDT (Local Distance Difference Test) calculator.
+
+        Computes local structural similarity between two aligned protein structures.
+        LDDT measures how well local distances are preserved in an alignment.
+
+        Examples
+        --------
+        >>> from pyfoldseek import Structure, LDDTCalculator
+        >>> s1 = Structure.from_file("protein1.pdb")
+        >>> s2 = Structure.from_file("protein2.pdb")
+        >>> calculator = LDDTCalculator()
+        >>> # Assume we have an alignment CIGAR string
+        >>> result = calculator.compute_lddt(s1.ca_coords, s2.ca_coords, "MMMM")
+        >>> print(f"Average LDDT: {result.average:.3f}")
+        >>> print(f"Per-residue LDDT: {result.per_residue}")
+    )pbdoc")
+        .def(py::init<unsigned int, unsigned int>(),
+             py::arg("max_query_len") = 50000,
+             py::arg("max_target_len") = 50000,
+             R"pbdoc(
+            Initialize LDDTCalculator.
+
+            Parameters
+            ----------
+            max_query_len : int, optional
+                Maximum query sequence length to support (default: 50000)
+            max_target_len : int, optional
+                Maximum target sequence length to support (default: 50000)
+        )pbdoc")
+        .def("compute_lddt", &PyLDDTCalculator::compute_lddt,
+             py::arg("query_ca"), py::arg("target_ca"),
+             py::arg("alignment"),
+             py::arg("query_start") = 0,
+             py::arg("target_start") = 0,
+             R"pbdoc(
+            Compute LDDT score between two aligned structures.
+
+            Parameters
+            ----------
+            query_ca : numpy.ndarray
+                Query CA coordinates (N1, 3)
+            target_ca : numpy.ndarray
+                Target CA coordinates (N2, 3)
+            alignment : str
+                CIGAR string representing alignment (M=match, I=insertion, D=deletion)
+            query_start : int, optional
+                Start position in query sequence (default: 0)
+            target_start : int, optional
+                Start position in target sequence (default: 0)
+
+            Returns
+            -------
+            LDDTResult
+                LDDT result with average score and per-residue scores
+
+            Notes
+            -----
+            LDDT score ranges from 0 to 1, where 1 indicates perfect local structure preservation.
+            The score is based on preservation of distances within a 15 Angstrom radius.
+        )pbdoc")
+        .def("__repr__", &PyLDDTCalculator::repr);
+
+    // Convenience function for LDDT
+    m.def("compute_lddt", &compute_lddt,
+          py::arg("ca1"), py::arg("ca2"),
+          py::arg("alignment"),
+          py::arg("query_start") = 0,
+          py::arg("target_start") = 0,
+          R"pbdoc(
+        Compute LDDT score between two aligned structures.
+
+        Convenience function that creates an LDDTCalculator and computes the score.
+
+        Parameters
+        ----------
+        ca1 : numpy.ndarray
+            First structure CA coordinates (N1, 3)
+        ca2 : numpy.ndarray
+            Second structure CA coordinates (N2, 3)
+        alignment : str
+            CIGAR string representing alignment (M=match, I=insertion, D=deletion)
+        query_start : int, optional
+            Start position in query (default: 0)
+        target_start : int, optional
+            Start position in target (default: 0)
+
+        Returns
+        -------
+        LDDTResult
+            LDDT result with average score and per-residue scores
+
+        Examples
+        --------
+        >>> from pyfoldseek import Structure, compute_lddt
+        >>> s1 = Structure.from_file("protein1.pdb")
+        >>> s2 = Structure.from_file("protein2.pdb")
+        >>> # Simple alignment where all residues match
+        >>> alignment = "M" * min(len(s1.sequence), len(s2.sequence))
+        >>> result = compute_lddt(s1.ca_coords, s2.ca_coords, alignment)
+        >>> print(f"Average LDDT: {result.average:.3f}")
     )pbdoc");
 }

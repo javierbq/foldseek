@@ -132,10 +132,10 @@ public:
         // Process chains
         PulchraWrapper pulchra;
 
-        // Use a static converter to avoid reloading the neural network model
-        // The StructureTo3Di constructor loads a neural network model, which
-        // can cause issues if created multiple times
-        static StructureTo3Di converter;
+        // Create a shared converter for this structure
+        // We need to be careful about the neural network model loading
+        // Using a local variable that gets destroyed after this structure is processed
+        StructureTo3Di* converter = new StructureTo3Di();
 
         // Iterate over all chains in the structure
         for (size_t chain_count = 0; chain_count < gemmi.chain.size(); chain_count++) {
@@ -168,7 +168,7 @@ public:
             }
 
             // Compute 3Di sequence
-            char* states = converter.structure2states(
+            char* states = converter->structure2states(
                 &gemmi.ca[start],
                 &gemmi.n[start],
                 &gemmi.c[start],
@@ -179,7 +179,7 @@ public:
 
             // Store intermediate features if requested
             if (compute_features) {
-                auto features = converter.getFeatures();
+                auto features = converter->getFeatures();
                 for (const auto& feat : features) {
                     result.features_.push_back(PyFeature(feat));
                 }
@@ -220,8 +220,12 @@ public:
         }
 
         if (result.chains_.empty()) {
+            delete converter;
             throw std::runtime_error("No valid chains found in structure");
         }
+
+        // Clean up converter
+        delete converter;
 
         return result;
     }
@@ -308,17 +312,23 @@ py::list batch_convert(const std::vector<std::string>& filenames,
                        int num_threads = 1) {
     py::list results;
 
-    // Process each file sequentially
+    // Release GIL for parallel processing
+    py::gil_scoped_release release;
+
+    // Process each file - directly instantiate PyStructure to avoid Python callback
     // TODO: Add OpenMP parallelization matching foldseek's threading
     for (size_t i = 0; i < filenames.size(); i++) {
         const auto& filename = filenames[i];
         try {
-            // Call the static method through Python to avoid C++ copy issues
-            py::object Structure = py::module_::import("pyfoldseek").attr("Structure");
-            py::object struct_obj = Structure.attr("from_file")(filename, reconstruct_backbone);
+            // Reacquire GIL to create Python objects
+            py::gil_scoped_acquire acquire;
+
+            // Directly call from_file method (this creates a new GemmiWrapper for each file)
+            PyStructure struct_obj = PyStructure::from_file(filename, reconstruct_backbone, false, -1);
             results.append(struct_obj);
         } catch (const std::exception& e) {
             // Log error but continue processing
+            py::gil_scoped_acquire acquire;
             std::cerr << "Error processing " << filename << ": " << e.what() << std::endl;
         }
     }

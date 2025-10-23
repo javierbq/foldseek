@@ -43,6 +43,9 @@ try:
         TMaligner,
         TMscoreResult,
         compute_tmscore,
+        LDDTCalculator,
+        LDDTResult,
+        compute_lddt,
         __version__ as _cpp_version,
     )
 except ImportError as e:
@@ -61,5 +64,8 @@ __all__ = [
     "TMaligner",
     "TMscoreResult",
     "compute_tmscore",
+    "LDDTCalculator",
+    "LDDTResult",
+    "compute_lddt",
     "__version__",
 ]
