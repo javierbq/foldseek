@@ -516,6 +516,156 @@ std::vector<PySearchHit> search(
 
 
 /**
+ * Cluster - represents a single cluster of structures
+ */
+class PyCluster {
+public:
+    PyCluster(int representative_idx, const std::string& representative_name)
+        : representative_idx_(representative_idx), representative_name_(representative_name) {}
+
+    void add_member(int idx, const std::string& name) {
+        member_indices_.push_back(idx);
+        member_names_.push_back(name);
+    }
+
+    int get_representative_idx() const { return representative_idx_; }
+    std::string get_representative_name() const { return representative_name_; }
+    std::vector<int> get_member_indices() const { return member_indices_; }
+    std::vector<std::string> get_member_names() const { return member_names_; }
+    int get_size() const { return member_indices_.size() + 1; }  // +1 for representative
+
+    std::string repr() const {
+        char buffer[256];
+        snprintf(buffer, sizeof(buffer),
+                "<Cluster representative='%s' size=%d>",
+                representative_name_.c_str(), get_size());
+        return std::string(buffer);
+    }
+
+private:
+    int representative_idx_;
+    std::string representative_name_;
+    std::vector<int> member_indices_;
+    std::vector<std::string> member_names_;
+};
+
+
+/**
+ * Perform greedy set-cover clustering
+ *
+ * Clusters structures based on structural similarity using a greedy algorithm:
+ * 1. For each structure, find all neighbors within threshold
+ * 2. Iteratively pick the structure with most unclustered neighbors as representative
+ * 3. Assign all its neighbors to its cluster
+ * 4. Repeat until all structures are clustered
+ */
+std::vector<PyCluster> cluster(
+    PyDatabase& database,
+    float tmscore_threshold = 0.5,
+    float coverage_threshold = 0.8,
+    const std::string& mode = "greedy"
+) {
+    if (mode != "greedy") {
+        throw std::invalid_argument("Only 'greedy' clustering mode is currently supported");
+    }
+
+    size_t db_size = database.size();
+    if (db_size == 0) {
+        return std::vector<PyCluster>();
+    }
+
+    // Step 1: Build neighbor lists for each structure
+    // neighbors[i] contains indices of structures similar to structure i
+    std::vector<std::vector<int>> neighbors(db_size);
+
+    // Track which structures have been clustered
+    std::vector<bool> clustered(db_size, false);
+
+    // Compute neighbors for each structure using all-vs-all search
+    for (size_t i = 0; i < db_size; i++) {
+        PyDatabaseEntry query_entry = database.get_by_index(i);
+        py::array_t<float> query_ca = query_entry.get_ca_coords();
+
+        if (query_ca.size() == 0) {
+            continue;  // Skip entries without coordinates
+        }
+
+        // Search against all structures
+        std::vector<PySearchHit> hits = search(
+            query_ca,
+            query_entry.get_sequence(),
+            database,
+            tmscore_threshold,
+            coverage_threshold,
+            db_size  // Get all hits
+        );
+
+        // Extract neighbor indices (excluding self)
+        for (const auto& hit : hits) {
+            // Find the index of this hit in the database
+            for (size_t j = 0; j < db_size; j++) {
+                if (database.get_by_index(j).get_key() == hit.get_target_key()) {
+                    if (i != j) {  // Don't include self
+                        neighbors[i].push_back(j);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // Step 2: Greedy clustering
+    std::vector<PyCluster> clusters;
+
+    while (true) {
+        // Find structure with most unclustered neighbors
+        int best_idx = -1;
+        int max_unclustered_neighbors = -1;
+
+        for (size_t i = 0; i < db_size; i++) {
+            if (clustered[i]) continue;
+
+            // Count unclustered neighbors
+            int unclustered_count = 0;
+            for (int neighbor_idx : neighbors[i]) {
+                if (!clustered[neighbor_idx]) {
+                    unclustered_count++;
+                }
+            }
+
+            if (unclustered_count > max_unclustered_neighbors) {
+                max_unclustered_neighbors = unclustered_count;
+                best_idx = i;
+            }
+        }
+
+        // If no unclustered structures remain, we're done
+        if (best_idx == -1) break;
+
+        // Create cluster with best_idx as representative
+        PyDatabaseEntry rep_entry = database.get_by_index(best_idx);
+        PyCluster cluster(best_idx, rep_entry.get_name());
+
+        // Mark representative as clustered
+        clustered[best_idx] = true;
+
+        // Add all unclustered neighbors to this cluster
+        for (int neighbor_idx : neighbors[best_idx]) {
+            if (!clustered[neighbor_idx]) {
+                PyDatabaseEntry member_entry = database.get_by_index(neighbor_idx);
+                cluster.add_member(neighbor_idx, member_entry.get_name());
+                clustered[neighbor_idx] = true;
+            }
+        }
+
+        clusters.push_back(cluster);
+    }
+
+    return clusters;
+}
+
+
+/**
  * Python module initialization
  */
 void init_database(py::module &m) {
@@ -677,5 +827,94 @@ void init_database(py::module &m) {
         >>> # Print top hits
         >>> for hit in hits[:10]:
         ...     print(f"{hit.target_name}: TM-score={hit.tmscore:.3f}")
+        )pbdoc");
+
+    py::class_<PyCluster>(m, "Cluster",
+        R"pbdoc(
+        Cluster of structurally similar proteins.
+
+        Represents a single cluster from clustering analysis. Each cluster has
+        a representative structure and zero or more member structures.
+
+        Attributes
+        ----------
+        representative_idx : int
+            Database index of representative structure
+        representative_name : str
+            Name of representative structure
+        member_indices : list of int
+            Database indices of member structures
+        member_names : list of str
+            Names of member structures
+        size : int
+            Total cluster size (representative + members)
+        )pbdoc")
+        .def(py::init<int, const std::string&>())
+        .def_property_readonly("representative_idx", &PyCluster::get_representative_idx)
+        .def_property_readonly("representative_name", &PyCluster::get_representative_name)
+        .def_property_readonly("member_indices", &PyCluster::get_member_indices)
+        .def_property_readonly("member_names", &PyCluster::get_member_names)
+        .def_property_readonly("size", &PyCluster::get_size)
+        .def("__repr__", &PyCluster::repr)
+        .def("__len__", &PyCluster::get_size);
+
+    m.def("cluster", &cluster,
+        py::arg("database"),
+        py::arg("tmscore_threshold") = 0.5,
+        py::arg("coverage_threshold") = 0.8,
+        py::arg("mode") = "greedy",
+        R"pbdoc(
+        Cluster structures in a database by structural similarity.
+
+        Uses a greedy set-cover algorithm to cluster structures:
+        1. Compute all-vs-all structural similarities
+        2. Find structure with most similar neighbors
+        3. Make it a cluster representative
+        4. Assign all its neighbors to the cluster
+        5. Repeat until all structures are clustered
+
+        This produces non-overlapping clusters where each structure appears
+        in exactly one cluster.
+
+        Parameters
+        ----------
+        database : Database
+            Database to cluster
+        tmscore_threshold : float, optional
+            Minimum TM-score for structures to be in same cluster (default: 0.5)
+        coverage_threshold : float, optional
+            Minimum alignment coverage for clustering (default: 0.8)
+        mode : str, optional
+            Clustering mode, only "greedy" supported (default: "greedy")
+
+        Returns
+        -------
+        list of Cluster
+            Clusters sorted by size (largest first)
+
+        Examples
+        --------
+        >>> from pyfoldseek import Database, cluster
+        >>>
+        >>> # Open database
+        >>> db = Database("/path/to/database")
+        >>>
+        >>> # Cluster at 50% TM-score threshold
+        >>> clusters = cluster(db, tmscore_threshold=0.5, coverage_threshold=0.8)
+        >>>
+        >>> # Print cluster information
+        >>> for i, c in enumerate(clusters):
+        ...     print(f"Cluster {i+1}: {c.size} structures")
+        ...     print(f"  Representative: {c.representative_name}")
+        ...     print(f"  Members: {len(c.member_names)}")
+        >>>
+        >>> # Get representative structures
+        >>> representatives = [c.representative_idx for c in clusters]
+
+        Notes
+        -----
+        - This performs all-vs-all search which is O(N²) in database size
+        - For large databases (>1000 structures), this may be slow
+        - Consider using the Foldseek CLI for production clustering
         )pbdoc");
 }

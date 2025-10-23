@@ -16,6 +16,8 @@ Main classes and functions:
 - DatabaseEntry: Single database entry
 - search: Search structures against a database
 - SearchHit: Single search result
+- cluster: Cluster database structures by similarity
+- Cluster: Clustering result
 
 Example usage:
     >>> from pyfoldseek import Structure
@@ -54,6 +56,8 @@ try:
         DatabaseEntry,
         search,
         SearchHit,
+        cluster,
+        Cluster,
         __version__ as _cpp_version,
     )
 except ImportError as e:
@@ -78,5 +82,7 @@ __all__ = [
     "DatabaseEntry",
     "search",
     "SearchHit",
+    "cluster",
+    "Cluster",
     "__version__",
 ]
