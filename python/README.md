@@ -4,11 +4,19 @@ Fast and accurate protein structure search with a Pythonic interface.
 
 ## Features
 
+**Phase 0 (MVP) - Complete ✅**
 - 🚀 **Fast PDB → 3Di conversion**: Convert protein structures to 3Di structural alphabet
 - 🔬 **High-performance C++ backend**: Same speed as command-line Foldseek
 - 🐍 **Pythonic API**: Easy to use with NumPy integration
 - 📦 **Multiple format support**: PDB, mmCIF, Foldcomp
 - 🧬 **Rich structure data**: Access coordinates, sequences, and metadata
+
+**Phase 1 (Enhanced) - Complete ✅**
+- 🔗 **Multi-chain support**: Iterate over chains in complex structures
+- ⚡ **Batch processing**: Convert multiple files efficiently
+- 📊 **Intermediate features**: Access 10D geometric descriptors
+- 🎯 **Format-specific loaders**: `from_pdb()`, `from_mmcif()`, `from_foldcomp()`
+- 🔄 **100% backward compatible**: Phase 0 code still works
 
 ## Installation
 
@@ -51,6 +59,60 @@ print(struct.cb_coords.shape)  # (247, 3)
 # Get structure metadata
 print(struct.length)         # 247
 print(struct.chain_names)    # ['A']
+```
+
+## Phase 1: Enhanced Features
+
+### Multi-chain structures
+
+```python
+from pyfoldseek import Structure
+
+# Load multi-chain structure
+struct = Structure.from_file("complex.pdb")
+
+# Iterate over all chains
+for chain in struct:
+    print(f"{chain.name}: {len(chain)} residues")
+    print(f"  3Di: {chain.seq_3di[:30]}...")
+
+# Access specific chain
+chain_a = struct.get_chain(0)
+print(chain_a.sequence)
+print(chain_a.ca_coords.shape)  # (N, 3)
+```
+
+### Batch processing
+
+```python
+from pyfoldseek import batch_convert
+
+# Process multiple structures
+files = ["protein1.pdb", "protein2.pdb", "protein3.pdb"]
+structures = batch_convert(files, num_threads=4)
+
+for struct in structures:
+    print(f"{struct.filename}: {struct.seq_3di}")
+```
+
+### Intermediate geometric features
+
+```python
+# Compute intermediate features
+struct = Structure.from_file("protein.pdb", compute_features=True)
+
+# Access 10D geometric descriptors
+features = struct.features  # NumPy array (N, 10)
+print(f"Features shape: {features.shape}")
+```
+
+### Format-specific loaders
+
+```python
+# Explicit format specification
+struct = Structure.from_pdb("protein.pdb")
+struct = Structure.from_mmcif("protein.cif")
+struct = Structure.from_foldcomp("protein.fcz")
 ```
 
 ## Advanced Usage

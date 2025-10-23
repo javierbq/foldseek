@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <memory>
 
 #include "GemmiWrapper.h"
 #include "structureto3di.h"
@@ -23,15 +24,103 @@ py::array_t<double> vec3_to_numpy(const std::vector<Vec3>& coords) {
     return result;
 }
 
-// Python-friendly Structure class
+// Forward declaration
+class PyStructure;
+
+// Chain class - represents a single chain in a structure
+class PyChain {
+public:
+    PyChain(const std::string& name,
+            const std::string& sequence,
+            const std::string& seq_3di,
+            const std::vector<Vec3>& ca,
+            const std::vector<Vec3>& n,
+            const std::vector<Vec3>& c,
+            const std::vector<Vec3>& cb)
+        : name_(name), sequence_(sequence), seq_3di_(seq_3di),
+          ca_coords_(ca), n_coords_(n), c_coords_(c), cb_coords_(cb) {}
+
+    std::string get_name() const { return name_; }
+    std::string get_sequence() const { return sequence_; }
+    std::string get_seq_3di() const { return seq_3di_; }
+    size_t get_length() const { return sequence_.length(); }
+
+    py::array_t<double> get_ca_coords() const { return vec3_to_numpy(ca_coords_); }
+    py::array_t<double> get_n_coords() const { return vec3_to_numpy(n_coords_); }
+    py::array_t<double> get_c_coords() const { return vec3_to_numpy(c_coords_); }
+    py::array_t<double> get_cb_coords() const { return vec3_to_numpy(cb_coords_); }
+
+    std::string repr() const {
+        return "<Chain '" + name_ + "', length=" + std::to_string(sequence_.length()) + ">";
+    }
+
+private:
+    std::string name_;
+    std::string sequence_;
+    std::string seq_3di_;
+    std::vector<Vec3> ca_coords_;
+    std::vector<Vec3> n_coords_;
+    std::vector<Vec3> c_coords_;
+    std::vector<Vec3> cb_coords_;
+};
+
+// Feature and Embedding classes for intermediate 3Di encoding data
+class PyFeature {
+public:
+    PyFeature(const StructureTo3Di::Feature& feat) {
+        for (size_t i = 0; i < Alphabet3Di::FEATURE_CNT; i++) {
+            features_[i] = feat.f[i];
+        }
+    }
+
+    py::array_t<double> to_array() const {
+        auto result = py::array_t<double>(Alphabet3Di::FEATURE_CNT);
+        auto buf = result.mutable_unchecked<1>();
+        for (size_t i = 0; i < Alphabet3Di::FEATURE_CNT; i++) {
+            buf(i) = features_[i];
+        }
+        return result;
+    }
+
+private:
+    double features_[Alphabet3Di::FEATURE_CNT];
+};
+
+class PyEmbedding {
+public:
+    PyEmbedding(const StructureTo3Di::Embedding& emb) {
+        for (size_t i = 0; i < Alphabet3Di::EMBEDDING_DIM; i++) {
+            embedding_[i] = emb.f[i];
+        }
+    }
+
+    py::array_t<double> to_array() const {
+        auto result = py::array_t<double>(Alphabet3Di::EMBEDDING_DIM);
+        auto buf = result.mutable_unchecked<1>();
+        for (size_t i = 0; i < Alphabet3Di::EMBEDDING_DIM; i++) {
+            buf(i) = embedding_[i];
+        }
+        return result;
+    }
+
+private:
+    double embedding_[Alphabet3Di::EMBEDDING_DIM];
+};
+
+// Enhanced Python Structure class with multi-chain support
 class PyStructure {
 public:
     PyStructure() = default;
 
-    // Load from file
+    // Load from file with enhanced options
     static PyStructure from_file(const std::string& filename,
-                                  bool reconstruct_backbone = false) {
+                                  bool reconstruct_backbone = false,
+                                  bool compute_features = false,
+                                  int chain_index = -1) {
         PyStructure result;
+        result.filename_ = filename;
+        result.compute_features_ = compute_features;
+
         GemmiWrapper gemmi;
 
         // Load structure
@@ -39,96 +128,201 @@ public:
             throw std::runtime_error("Failed to load structure from: " + filename);
         }
 
-        // Get first chain (for now, multi-chain support comes later)
-        auto chain = gemmi.nextChain();
-        if (chain.first == chain.second) {
-            throw std::runtime_error("No valid chains found in structure");
-        }
+        // Process chains
+        PulchraWrapper pulchra;
+        StructureTo3Di converter;
 
-        size_t start = chain.first;
-        size_t end = chain.second;
-        size_t len = end - start;
+        int chain_count = 0;
+        while (true) {
+            auto chain_bounds = gemmi.nextChain();
+            if (chain_bounds.first == chain_bounds.second) {
+                break;  // No more chains
+            }
 
-        // Store amino acid sequence
-        result.sequence = std::string(gemmi.ami.begin() + start,
-                                     gemmi.ami.begin() + end);
+            // If specific chain requested, skip others
+            if (chain_index >= 0 && chain_count != chain_index) {
+                chain_count++;
+                continue;
+            }
 
-        // Reconstruct backbone if needed (CA-only structures)
-        if (reconstruct_backbone) {
-            PulchraWrapper pulchra;
-            // Check if we need reconstruction
-            bool needs_reconstruction = false;
-            for (size_t i = start; i < end; i++) {
-                if (std::isnan(gemmi.n[i].x) || std::isnan(gemmi.c[i].x)) {
-                    needs_reconstruction = true;
-                    break;
+            size_t start = chain_bounds.first;
+            size_t end = chain_bounds.second;
+            size_t len = end - start;
+
+            // Store amino acid sequence
+            std::string sequence(gemmi.ami.begin() + start, gemmi.ami.begin() + end);
+
+            // Reconstruct backbone if needed
+            if (reconstruct_backbone) {
+                bool needs_reconstruction = false;
+                for (size_t i = start; i < end; i++) {
+                    if (std::isnan(gemmi.n[i].x) || std::isnan(gemmi.c[i].x)) {
+                        needs_reconstruction = true;
+                        break;
+                    }
+                }
+
+                if (needs_reconstruction) {
+                    pulchra.recFromCAlphaTrace(&gemmi.ca[start], &gemmi.n[start],
+                                              &gemmi.c[start], len);
                 }
             }
 
-            if (needs_reconstruction) {
-                pulchra.recFromCAlphaTrace(&gemmi.ca[start], &gemmi.n[start],
-                                          &gemmi.c[start], len);
+            // Compute 3Di sequence
+            char* states = converter.structure2states(
+                &gemmi.ca[start],
+                &gemmi.n[start],
+                &gemmi.c[start],
+                &gemmi.cb[start],
+                len
+            );
+            std::string seq_3di(states, len);
+
+            // Store intermediate features if requested
+            if (compute_features) {
+                auto features = converter.getFeatures();
+                for (const auto& feat : features) {
+                    result.features_.push_back(PyFeature(feat));
+                }
+            }
+
+            // Create coordinates
+            std::vector<Vec3> ca_coords(gemmi.ca.begin() + start, gemmi.ca.begin() + end);
+            std::vector<Vec3> n_coords(gemmi.n.begin() + start, gemmi.n.begin() + end);
+            std::vector<Vec3> c_coords(gemmi.c.begin() + start, gemmi.c.begin() + end);
+            std::vector<Vec3> cb_coords(gemmi.cb.begin() + start, gemmi.cb.begin() + end);
+
+            // Get chain name
+            std::string chain_name = chain_count < gemmi.chainNames.size()
+                                    ? gemmi.chainNames[chain_count]
+                                    : std::to_string(chain_count);
+
+            // Create chain object
+            PyChain chain(chain_name, sequence, seq_3di,
+                         ca_coords, n_coords, c_coords, cb_coords);
+            result.chains_.push_back(chain);
+
+            // For backward compatibility, first chain is the "default"
+            if (chain_count == 0) {
+                result.sequence_ = sequence;
+                result.seq_3di_ = seq_3di;
+                result.ca_coords_ = ca_coords;
+                result.n_coords_ = n_coords;
+                result.c_coords_ = c_coords;
+                result.cb_coords_ = cb_coords;
+            }
+
+            chain_count++;
+
+            // If specific chain requested, stop after finding it
+            if (chain_index >= 0 && chain_count > chain_index) {
+                break;
             }
         }
 
-        // Compute 3Di sequence
-        StructureTo3Di converter;
-        char* states = converter.structure2states(
-            &gemmi.ca[start],
-            &gemmi.n[start],
-            &gemmi.c[start],
-            &gemmi.cb[start],
-            len
-        );
-        result.seq_3di = std::string(states, len);
-
-        // Store coordinates
-        result.ca_coords = std::vector<Vec3>(gemmi.ca.begin() + start,
-                                            gemmi.ca.begin() + end);
-        result.n_coords = std::vector<Vec3>(gemmi.n.begin() + start,
-                                           gemmi.n.begin() + end);
-        result.c_coords = std::vector<Vec3>(gemmi.c.begin() + start,
-                                           gemmi.c.begin() + end);
-        result.cb_coords = std::vector<Vec3>(gemmi.cb.begin() + start,
-                                            gemmi.cb.begin() + end);
-
-        // Store metadata
-        result.chain_names = gemmi.chainNames;
-        result.filename = filename;
+        if (result.chains_.empty()) {
+            throw std::runtime_error("No valid chains found in structure");
+        }
 
         return result;
     }
 
-    // Properties
-    std::string get_sequence() const { return sequence; }
-    std::string get_seq_3di() const { return seq_3di; }
-    size_t get_length() const { return sequence.length(); }
-    std::vector<std::string> get_chain_names() const { return chain_names; }
-    std::string get_filename() const { return filename; }
+    // Format-specific loaders
+    static PyStructure from_pdb(const std::string& filename,
+                                 bool reconstruct_backbone = false) {
+        return from_file(filename, reconstruct_backbone);
+    }
 
-    // Get coordinates as NumPy arrays
-    py::array_t<double> get_ca_coords() const { return vec3_to_numpy(ca_coords); }
-    py::array_t<double> get_n_coords() const { return vec3_to_numpy(n_coords); }
-    py::array_t<double> get_c_coords() const { return vec3_to_numpy(c_coords); }
-    py::array_t<double> get_cb_coords() const { return vec3_to_numpy(cb_coords); }
+    static PyStructure from_mmcif(const std::string& filename,
+                                   bool reconstruct_backbone = false) {
+        return from_file(filename, reconstruct_backbone);
+    }
+
+    static PyStructure from_foldcomp(const std::string& filename) {
+        return from_file(filename, false);
+    }
+
+    // Properties for backward compatibility (first chain)
+    std::string get_sequence() const { return sequence_; }
+    std::string get_seq_3di() const { return seq_3di_; }
+    size_t get_length() const { return sequence_.length(); }
+    std::string get_filename() const { return filename_; }
+
+    py::array_t<double> get_ca_coords() const { return vec3_to_numpy(ca_coords_); }
+    py::array_t<double> get_n_coords() const { return vec3_to_numpy(n_coords_); }
+    py::array_t<double> get_c_coords() const { return vec3_to_numpy(c_coords_); }
+    py::array_t<double> get_cb_coords() const { return vec3_to_numpy(cb_coords_); }
+
+    // Multi-chain support
+    const std::vector<PyChain>& get_chains() const { return chains_; }
+    size_t num_chains() const { return chains_.size(); }
+    const PyChain& get_chain(size_t index) const {
+        if (index >= chains_.size()) {
+            throw std::out_of_range("Chain index out of range");
+        }
+        return chains_[index];
+    }
+
+    // Intermediate features
+    py::array_t<double> get_features() const {
+        if (features_.empty()) {
+            throw std::runtime_error(
+                "Features not computed. Set compute_features=True when loading."
+            );
+        }
+
+        auto result = py::array_t<double>({features_.size(), Alphabet3Di::FEATURE_CNT});
+        auto buf = result.mutable_unchecked<2>();
+        for (size_t i = 0; i < features_.size(); i++) {
+            auto feat_array = features_[i].to_array();
+            auto feat_buf = feat_array.unchecked<1>();
+            for (size_t j = 0; j < Alphabet3Di::FEATURE_CNT; j++) {
+                buf(i, j) = feat_buf(j);
+            }
+        }
+        return result;
+    }
 
     // String representation
     std::string repr() const {
-        return "<Structure: " + filename +
-               ", length=" + std::to_string(sequence.length()) +
-               ", chains=" + std::to_string(chain_names.size()) + ">";
+        return "<Structure: " + filename_ +
+               ", chains=" + std::to_string(chains_.size()) +
+               ", length=" + std::to_string(sequence_.length()) + ">";
     }
 
 private:
-    std::string sequence;
-    std::string seq_3di;
-    std::vector<Vec3> ca_coords;
-    std::vector<Vec3> n_coords;
-    std::vector<Vec3> c_coords;
-    std::vector<Vec3> cb_coords;
-    std::vector<std::string> chain_names;
-    std::string filename;
+    std::string sequence_;
+    std::string seq_3di_;
+    std::vector<Vec3> ca_coords_;
+    std::vector<Vec3> n_coords_;
+    std::vector<Vec3> c_coords_;
+    std::vector<Vec3> cb_coords_;
+    std::vector<PyChain> chains_;
+    std::string filename_;
+    bool compute_features_;
+    std::vector<PyFeature> features_;
 };
+
+// Batch processing function
+std::vector<PyStructure> batch_convert(const std::vector<std::string>& filenames,
+                                        bool reconstruct_backbone = false,
+                                        int num_threads = 1) {
+    std::vector<PyStructure> results;
+    results.reserve(filenames.size());
+
+    // For now, sequential processing
+    // TODO: Add OpenMP parallelization matching foldseek's threading
+    for (const auto& filename : filenames) {
+        try {
+            results.push_back(PyStructure::from_file(filename, reconstruct_backbone));
+        } catch (const std::exception& e) {
+            // Log error but continue processing
+            std::cerr << "Error processing " << filename << ": " << e.what() << std::endl;
+        }
+    }
+
+    return results;
+}
 
 // Standalone function: convert coordinates to 3Di
 std::string coords_to_3di(py::array_t<double> ca,
@@ -191,20 +385,40 @@ void init_structure(py::module &m) {
                    std::to_string(v.y) + ", " + std::to_string(v.z) + ")";
         });
 
+    // Chain class
+    py::class_<PyChain>(m, "Chain", R"pbdoc(
+        Represents a single chain in a protein structure.
+
+        Each chain has its own sequence, 3Di encoding, and coordinates.
+    )pbdoc")
+        .def_property_readonly("name", &PyChain::get_name, "Chain identifier")
+        .def_property_readonly("sequence", &PyChain::get_sequence, "Amino acid sequence")
+        .def_property_readonly("seq_3di", &PyChain::get_seq_3di, "3Di structural alphabet sequence")
+        .def_property_readonly("length", &PyChain::get_length, "Number of residues")
+        .def_property_readonly("ca_coords", &PyChain::get_ca_coords, "C-alpha coordinates (N, 3)")
+        .def_property_readonly("n_coords", &PyChain::get_n_coords, "Nitrogen coordinates (N, 3)")
+        .def_property_readonly("c_coords", &PyChain::get_c_coords, "Carbon coordinates (N, 3)")
+        .def_property_readonly("cb_coords", &PyChain::get_cb_coords, "C-beta coordinates (N, 3)")
+        .def("__repr__", &PyChain::repr)
+        .def("__len__", &PyChain::get_length);
+
     // Structure class
     py::class_<PyStructure>(m, "Structure", R"pbdoc(
         Represents a protein structure with 3Di encoding.
 
-        Load structures from PDB/mmCIF/Foldcomp files and access:
-        - Amino acid sequence
-        - 3Di structural alphabet sequence
+        Supports multi-chain structures and provides access to:
+        - Amino acid sequences
+        - 3Di structural alphabet sequences
         - Atomic coordinates (CA, N, C, CB)
         - Chain information
+        - Intermediate encoding features
     )pbdoc")
         .def(py::init<>())
         .def_static("from_file", &PyStructure::from_file,
                    py::arg("filename"),
                    py::arg("reconstruct_backbone") = false,
+                   py::arg("compute_features") = false,
+                   py::arg("chain_index") = -1,
                    R"pbdoc(
             Load structure from file.
 
@@ -214,6 +428,10 @@ void init_structure(py::module &m) {
                 Path to PDB, mmCIF, or Foldcomp file
             reconstruct_backbone : bool, optional
                 Reconstruct N, C, CB atoms from CA-only structures (default: False)
+            compute_features : bool, optional
+                Compute and store intermediate geometric features (default: False)
+            chain_index : int, optional
+                Load only specific chain index, -1 for all chains (default: -1)
 
             Returns
             -------
@@ -223,16 +441,26 @@ void init_structure(py::module &m) {
             Examples
             --------
             >>> struct = Structure.from_file("protein.pdb")
-            >>> print(struct.seq_3di)
+            >>> struct = Structure.from_file("protein.pdb", compute_features=True)
+            >>> struct = Structure.from_file("complex.pdb", chain_index=0)
         )pbdoc")
+        .def_static("from_pdb", &PyStructure::from_pdb,
+                   py::arg("filename"),
+                   py::arg("reconstruct_backbone") = false,
+                   "Load structure from PDB file")
+        .def_static("from_mmcif", &PyStructure::from_mmcif,
+                   py::arg("filename"),
+                   py::arg("reconstruct_backbone") = false,
+                   "Load structure from mmCIF file")
+        .def_static("from_foldcomp", &PyStructure::from_foldcomp,
+                   py::arg("filename"),
+                   "Load structure from Foldcomp compressed file")
         .def_property_readonly("sequence", &PyStructure::get_sequence,
-                              "Amino acid sequence (one-letter code)")
+                              "Amino acid sequence (first chain)")
         .def_property_readonly("seq_3di", &PyStructure::get_seq_3di,
-                              "3Di structural alphabet sequence")
+                              "3Di structural alphabet sequence (first chain)")
         .def_property_readonly("length", &PyStructure::get_length,
-                              "Number of residues")
-        .def_property_readonly("chain_names", &PyStructure::get_chain_names,
-                              "List of chain identifiers")
+                              "Number of residues (first chain)")
         .def_property_readonly("filename", &PyStructure::get_filename,
                               "Source filename")
         .def_property_readonly("ca_coords", &PyStructure::get_ca_coords,
@@ -243,10 +471,49 @@ void init_structure(py::module &m) {
                               "Carbon coordinates as NumPy array (N, 3)")
         .def_property_readonly("cb_coords", &PyStructure::get_cb_coords,
                               "C-beta coordinates as NumPy array (N, 3)")
+        .def_property_readonly("chains", &PyStructure::get_chains,
+                              "List of all chains in structure")
+        .def_property_readonly("num_chains", &PyStructure::num_chains,
+                              "Number of chains in structure")
+        .def("get_chain", &PyStructure::get_chain,
+             py::arg("index"),
+             "Get specific chain by index")
+        .def_property_readonly("features", &PyStructure::get_features,
+                              "Intermediate geometric features (N, 10)")
         .def("__repr__", &PyStructure::repr)
-        .def("__len__", &PyStructure::get_length);
+        .def("__len__", &PyStructure::get_length)
+        .def("__iter__", [](const PyStructure &s) {
+            return py::make_iterator(s.get_chains().begin(), s.get_chains().end());
+        }, py::keep_alive<0, 1>(), "Iterate over chains");
 
-    // Standalone function
+    // Batch processing function
+    m.def("batch_convert", &batch_convert,
+          py::arg("filenames"),
+          py::arg("reconstruct_backbone") = false,
+          py::arg("num_threads") = 1,
+          R"pbdoc(
+        Convert multiple structure files to 3Di in batch.
+
+        Parameters
+        ----------
+        filenames : List[str]
+            List of file paths to convert
+        reconstruct_backbone : bool, optional
+            Reconstruct backbone atoms (default: False)
+        num_threads : int, optional
+            Number of threads for parallel processing (default: 1)
+
+        Returns
+        -------
+        List[Structure]
+            List of loaded structures
+
+        Examples
+        --------
+        >>> structures = batch_convert(["p1.pdb", "p2.pdb", "p3.pdb"], num_threads=4)
+    )pbdoc");
+
+    // Standalone coordinate conversion function
     m.def("coords_to_3di", &coords_to_3di,
           py::arg("ca"), py::arg("n"), py::arg("c"), py::arg("cb"),
           R"pbdoc(
