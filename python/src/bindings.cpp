@@ -1,6 +1,32 @@
 #include <pybind11/pybind11.h>
+#include <vector>
 
 namespace py = pybind11;
+
+// Required global symbols that foldseek libraries expect
+// These are normally defined in foldseek.cpp for the executable
+const char* binary_name = "pyfoldseek";
+const char* tool_name = "pyfoldseek";
+const char* tool_introduction = "Python bindings for Foldseek";
+const char* main_author = "Foldseek team";
+const char* show_extended_help = "0";
+const char* show_bash_info = nullptr;
+const char* index_version_compatible = "fs1";
+bool hide_base_commands = true;
+bool hide_base_downloads = true;
+
+// Command system symbols (declared extern, already defined in libraries)
+struct Command;
+extern std::vector<Command> baseCommands;
+extern std::vector<Command> foldseekCommands;
+void (*initCommands)(void) = nullptr;
+
+// Parameter singleton initialization
+// This is required by foldseek libraries but we don't need to actually initialize parameters
+// for the Python bindings (we're not using the command system)
+void initParameterSingleton() {
+    // No-op for Python bindings
+}
 
 // Forward declarations of init functions from other files
 void init_structure(py::module &m);

@@ -35,15 +35,36 @@ target_include_directories(pyfoldseek PRIVATE
 set(FOLDSEEK_BUILD_DIR ${CMAKE_SOURCE_DIR}/../build)
 
 # Link against foldseek libraries (use full paths to built libraries)
+# Use --whole-archive to include all symbols
 target_link_libraries(pyfoldseek PRIVATE
+    -Wl,--whole-archive
+    ${FOLDSEEK_BUILD_DIR}/src/libfoldseek-framework.a
     ${FOLDSEEK_BUILD_DIR}/src/strucclustutils/libgemmiwrapper.a
+    ${FOLDSEEK_BUILD_DIR}/src/version/libversion.a
+    ${FOLDSEEK_BUILD_DIR}/src/libprostt5.a
     ${FOLDSEEK_BUILD_DIR}/lib/3di/lib3di.a
     ${FOLDSEEK_BUILD_DIR}/lib/foldcomp/libfoldcomp.a
     ${FOLDSEEK_BUILD_DIR}/lib/pulchra/libpulchra.a
     ${FOLDSEEK_BUILD_DIR}/lib/kerasify/libkerasify.a
+    ${FOLDSEEK_BUILD_DIR}/lib/mmseqs/src/libmmseqs-framework.a
+    ${FOLDSEEK_BUILD_DIR}/lib/tmalign/libtmalign.a
+    ${FOLDSEEK_BUILD_DIR}/lib/prostt5/src/libllama.a
+    ${FOLDSEEK_BUILD_DIR}/lib/prostt5/ggml/src/libggml.a
+    ${FOLDSEEK_BUILD_DIR}/lib/prostt5/ggml/src/libggml-cpu.a
+    ${FOLDSEEK_BUILD_DIR}/lib/prostt5/ggml/src/libggml-base.a
+    ${FOLDSEEK_BUILD_DIR}/libblock_aligner_c.a
+    -Wl,--no-whole-archive
     ${FOLDSEEK_BUILD_DIR}/lib/mmseqs/lib/zstd/build/cmake/lib/libzstd.a
+    ${FOLDSEEK_BUILD_DIR}/lib/mmseqs/lib/tantan/libtantan.a
+    ${FOLDSEEK_BUILD_DIR}/lib/mmseqs/lib/microtar/libmicrotar.a
+    ${FOLDSEEK_BUILD_DIR}/lib/mmseqs/lib/tinyexpr/libtinyexpr.a
     z  # zlib
     bz2  # bzip2
+    pthread  # for ggml threading
+    dl  # for dynamic loading
+    m  # math library
+    gomp  # OpenMP
+    atomic  # for atomic operations
 )
 
 # Installation

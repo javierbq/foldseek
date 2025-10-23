@@ -133,21 +133,15 @@ public:
         PulchraWrapper pulchra;
         StructureTo3Di converter;
 
-        int chain_count = 0;
-        while (true) {
-            auto chain_bounds = gemmi.nextChain();
-            if (chain_bounds.first == chain_bounds.second) {
-                break;  // No more chains
-            }
-
+        // Iterate over all chains in the structure
+        for (size_t chain_count = 0; chain_count < gemmi.chain.size(); chain_count++) {
             // If specific chain requested, skip others
-            if (chain_index >= 0 && chain_count != chain_index) {
-                chain_count++;
+            if (chain_index >= 0 && static_cast<int>(chain_count) != chain_index) {
                 continue;
             }
 
-            size_t start = chain_bounds.first;
-            size_t end = chain_bounds.second;
+            size_t start = gemmi.chain[chain_count].first;
+            size_t end = gemmi.chain[chain_count].second;
             size_t len = end - start;
 
             // Store amino acid sequence

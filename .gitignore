@@ -31,3 +31,11 @@ cmake-build-*/
 .vscode/
 *.swp
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+*.egg
