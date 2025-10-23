@@ -14,6 +14,8 @@ Main classes and functions:
 - compute_lddt: Compute LDDT between structures
 - Database: Read Foldseek databases
 - DatabaseEntry: Single database entry
+- search: Search structures against a database
+- SearchHit: Single search result
 
 Example usage:
     >>> from pyfoldseek import Structure
@@ -50,6 +52,8 @@ try:
         compute_lddt,
         Database,
         DatabaseEntry,
+        search,
+        SearchHit,
         __version__ as _cpp_version,
     )
 except ImportError as e:
@@ -72,5 +76,7 @@ __all__ = [
     "compute_lddt",
     "Database",
     "DatabaseEntry",
+    "search",
+    "SearchHit",
     "__version__",
 ]

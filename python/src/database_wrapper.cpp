@@ -18,6 +18,7 @@
 #include "FileUtil.h"
 #include "structureto3di.h"
 #include "Coordinate16.h"
+#include "TMaligner.h"
 
 namespace py = pybind11;
 
@@ -316,6 +317,198 @@ private:
 
 
 /**
+ * Search Hit - represents a single search result
+ */
+class PySearchHit {
+public:
+    PySearchHit() = default;
+
+    PySearchHit(unsigned int target_key, const std::string& target_name,
+                float tmscore, float rmsd, int alignment_length,
+                float query_coverage, float target_coverage,
+                const std::string& alignment)
+        : target_key_(target_key), target_name_(target_name),
+          tmscore_(tmscore), rmsd_(rmsd), alignment_length_(alignment_length),
+          query_coverage_(query_coverage), target_coverage_(target_coverage),
+          alignment_(alignment) {}
+
+    unsigned int get_target_key() const { return target_key_; }
+    std::string get_target_name() const { return target_name_; }
+    float get_tmscore() const { return tmscore_; }
+    float get_rmsd() const { return rmsd_; }
+    int get_alignment_length() const { return alignment_length_; }
+    float get_query_coverage() const { return query_coverage_; }
+    float get_target_coverage() const { return target_coverage_; }
+    std::string get_alignment() const { return alignment_; }
+
+    std::string repr() const {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "<SearchHit target='%s' TM-score=%.3f RMSD=%.2f alnlen=%d>",
+                 target_name_.c_str(), tmscore_, rmsd_, alignment_length_);
+        return std::string(buf);
+    }
+
+private:
+    unsigned int target_key_;
+    std::string target_name_;
+    float tmscore_;
+    float rmsd_;
+    int alignment_length_;
+    float query_coverage_;
+    float target_coverage_;
+    std::string alignment_;
+};
+
+
+/**
+ * Perform structure search using TM-align
+ */
+std::vector<PySearchHit> search(
+    py::array_t<double> query_ca,
+    const std::string& query_sequence,
+    PyDatabase& database,
+    float tmscore_threshold = 0.5,
+    float coverage_threshold = 0.0,
+    int max_hits = 1000
+) {
+    // Validate input
+    if (query_ca.ndim() != 2 || query_ca.shape(1) != 3) {
+        throw std::invalid_argument("query_ca must be an (N, 3) array");
+    }
+
+    size_t query_len = query_ca.shape(0);
+    if (query_sequence.length() != query_len) {
+        throw std::invalid_argument("query_sequence length must match query_ca length");
+    }
+
+    // Convert query coordinates to separate x, y, z arrays
+    auto query_buf = query_ca.unchecked<2>();
+    float* query_x = new float[query_len];
+    float* query_y = new float[query_len];
+    float* query_z = new float[query_len];
+    char* query_seq_arr = new char[query_len + 1];
+
+    for (size_t i = 0; i < query_len; i++) {
+        query_x[i] = query_buf(i, 0);
+        query_y[i] = query_buf(i, 1);
+        query_z[i] = query_buf(i, 2);
+        query_seq_arr[i] = query_sequence[i];
+    }
+    query_seq_arr[query_len] = '\0';
+
+    // Create TM-aligner (estimate max length as 2x query)
+    size_t max_len = query_len * 2;
+    if (max_len < 1000) max_len = 1000;
+    TMaligner tmaligner(max_len, true, false, false);
+
+    // Initialize query (once before loop)
+    tmaligner.initQuery(query_x, query_y, query_z, query_seq_arr, query_len);
+
+    // Results vector
+    std::vector<PySearchHit> hits;
+
+    // Iterate over database
+    size_t db_size = database.size();
+    for (size_t i = 0; i < db_size; i++) {
+        // Get database entry
+        PyDatabaseEntry entry = database.get_by_index(i);
+
+        // Get target coordinates
+        py::array_t<float> target_ca = entry.get_ca_coords();
+        if (target_ca.size() == 0) {
+            continue;  // Skip entries without coordinates
+        }
+
+        size_t target_len = target_ca.shape(0);
+
+        // Convert target coordinates to separate x, y, z arrays
+        auto target_buf = target_ca.unchecked<2>();
+        float* target_x = new float[target_len];
+        float* target_y = new float[target_len];
+        float* target_z = new float[target_len];
+        char* target_seq_arr = new char[target_len + 1];
+
+        for (size_t j = 0; j < target_len; j++) {
+            target_x[j] = target_buf(j, 0);
+            target_y[j] = target_buf(j, 1);
+            target_z[j] = target_buf(j, 2);
+        }
+        std::copy(entry.get_sequence().begin(), entry.get_sequence().end(), target_seq_arr);
+        target_seq_arr[target_len] = '\0';
+
+        try {
+            // Perform TM-align
+            float tm_score_value;
+            Matcher::result_t aln_result = tmaligner.align(
+                entry.get_key(),
+                target_x, target_y, target_z,
+                target_seq_arr,
+                target_len,
+                tm_score_value
+            );
+
+            // Check thresholds
+            if (tm_score_value >= tmscore_threshold) {
+                int alignment_length = aln_result.qEndPos - aln_result.qStartPos;
+                float query_cov = static_cast<float>(alignment_length) / query_len;
+                float target_cov = static_cast<float>(alignment_length) / target_len;
+
+                if (query_cov >= coverage_threshold && target_cov >= coverage_threshold) {
+                    // Get TM-score result for RMSD
+                    TMaligner::TMscoreResult tm_result = tmaligner.computeTMscore(
+                        target_x, target_y, target_z,
+                        target_len,
+                        aln_result.qStartPos,
+                        aln_result.dbStartPos,
+                        aln_result.backtrace,
+                        TMaligner::normalization(0, alignment_length, query_len, target_len)
+                    );
+
+                    PySearchHit hit(
+                        entry.get_key(),
+                        entry.get_name(),
+                        tm_score_value,
+                        tm_result.rmsd,
+                        alignment_length,
+                        query_cov,
+                        target_cov,
+                        aln_result.backtrace
+                    );
+                    hits.push_back(hit);
+                }
+            }
+        } catch (const std::exception& e) {
+            // Skip entries that fail alignment, but still clean up
+        }
+
+        // Clean up target arrays (always executed)
+        delete[] target_x;
+        delete[] target_y;
+        delete[] target_z;
+        delete[] target_seq_arr;
+    }
+
+    // Sort by TM-score (descending)
+    std::sort(hits.begin(), hits.end(), [](const PySearchHit& a, const PySearchHit& b) {
+        return a.get_tmscore() > b.get_tmscore();
+    });
+
+    // Limit to max_hits
+    if (hits.size() > static_cast<size_t>(max_hits)) {
+        hits.resize(max_hits);
+    }
+
+    // Clean up query arrays
+    delete[] query_x;
+    delete[] query_y;
+    delete[] query_z;
+    delete[] query_seq_arr;
+
+    return hits;
+}
+
+
+/**
  * Python module initialization
  */
 void init_database(py::module &m) {
@@ -391,4 +584,91 @@ void init_database(py::module &m) {
         .def("keys", &PyDatabase::get_keys,
              "Get all database keys")
         .def("__repr__", &PyDatabase::repr);
+
+    py::class_<PySearchHit>(m, "SearchHit",
+        R"pbdoc(
+        Single structure search result.
+
+        Attributes
+        ----------
+        target_key : int
+            Database key of the target structure
+        target_name : str
+            Name of the target structure
+        tmscore : float
+            TM-score (normalized by query length)
+        rmsd : float
+            Root mean square deviation (Å)
+        alignment_length : int
+            Number of aligned residues
+        query_coverage : float
+            Fraction of query aligned (0.0-1.0)
+        target_coverage : float
+            Fraction of target aligned (0.0-1.0)
+        alignment : str
+            Alignment string (CIGAR-like format)
+        )pbdoc")
+        .def(py::init<>())
+        .def_property_readonly("target_key", &PySearchHit::get_target_key)
+        .def_property_readonly("target_name", &PySearchHit::get_target_name)
+        .def_property_readonly("tmscore", &PySearchHit::get_tmscore)
+        .def_property_readonly("rmsd", &PySearchHit::get_rmsd)
+        .def_property_readonly("alignment_length", &PySearchHit::get_alignment_length)
+        .def_property_readonly("query_coverage", &PySearchHit::get_query_coverage)
+        .def_property_readonly("target_coverage", &PySearchHit::get_target_coverage)
+        .def_property_readonly("alignment", &PySearchHit::get_alignment)
+        .def("__repr__", &PySearchHit::repr);
+
+    m.def("search", &search,
+        py::arg("query_ca"),
+        py::arg("query_sequence"),
+        py::arg("database"),
+        py::arg("tmscore_threshold") = 0.5,
+        py::arg("coverage_threshold") = 0.0,
+        py::arg("max_hits") = 1000,
+        R"pbdoc(
+        Search a query structure against a database using TM-align.
+
+        This is a simplified search that performs all-vs-all TM-align comparisons.
+        For large-scale searches, consider using the Foldseek CLI which uses
+        optimized prefiltering.
+
+        Parameters
+        ----------
+        query_ca : numpy.ndarray
+            Query CA coordinates as (N, 3) array
+        query_sequence : str
+            Query amino acid sequence
+        database : Database
+            Target database to search against
+        tmscore_threshold : float, optional
+            Minimum TM-score to report (default: 0.5)
+        coverage_threshold : float, optional
+            Minimum query/target coverage (default: 0.0)
+        max_hits : int, optional
+            Maximum number of hits to return (default: 1000)
+
+        Returns
+        -------
+        list of SearchHit
+            Search results sorted by TM-score (descending)
+
+        Examples
+        --------
+        >>> from pyfoldseek import Structure, Database, search
+        >>>
+        >>> # Load query structure
+        >>> query = Structure.from_file("query.pdb")
+        >>>
+        >>> # Open database
+        >>> db = Database("/path/to/database")
+        >>>
+        >>> # Search
+        >>> hits = search(query.ca_coords, query.sequence, db,
+        ...               tmscore_threshold=0.6, max_hits=100)
+        >>>
+        >>> # Print top hits
+        >>> for hit in hits[:10]:
+        ...     print(f"{hit.target_name}: TM-score={hit.tmscore:.3f}")
+        )pbdoc");
 }
