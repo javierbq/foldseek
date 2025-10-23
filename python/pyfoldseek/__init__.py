@@ -12,6 +12,8 @@ Main classes and functions:
 - compute_tmscore: Compute TM-score between structures
 - LDDTCalculator: LDDT structural similarity calculator
 - compute_lddt: Compute LDDT between structures
+- Database: Read Foldseek databases
+- DatabaseEntry: Single database entry
 
 Example usage:
     >>> from pyfoldseek import Structure
@@ -46,6 +48,8 @@ try:
         LDDTCalculator,
         LDDTResult,
         compute_lddt,
+        Database,
+        DatabaseEntry,
         __version__ as _cpp_version,
     )
 except ImportError as e:
@@ -66,5 +70,7 @@ __all__ = [
     "LDDTCalculator",
     "LDDTResult",
     "compute_lddt",
+    "Database",
+    "DatabaseEntry",
     "__version__",
 ]

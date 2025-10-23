@@ -39,6 +39,7 @@ std::pair<size_t, size_t> GemmiWrapper::nextChain() {
 // Forward declarations of init functions from other files
 void init_structure(py::module &m);
 void init_alignment(py::module &m);
+void init_database(py::module &m);
 
 PYBIND11_MODULE(pyfoldseek, m) {
     m.doc() = R"pbdoc(
@@ -72,6 +73,7 @@ PYBIND11_MODULE(pyfoldseek, m) {
     // Initialize submodules
     init_structure(m);
     init_alignment(m);
+    init_database(m);
 
 #ifdef VERSION_INFO
     m.attr("__version__") = VERSION_INFO;

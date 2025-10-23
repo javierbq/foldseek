@@ -12,6 +12,7 @@ pybind11_add_module(pyfoldseek
     src/bindings.cpp
     src/structure_wrapper.cpp
     src/alignment_wrapper.cpp
+    src/database_wrapper.cpp
 )
 
 # Set C++ standard
@@ -33,6 +34,7 @@ target_include_directories(pyfoldseek PRIVATE
     ${CMAKE_SOURCE_DIR}/../lib/mmseqs/lib/simde
     ${CMAKE_SOURCE_DIR}/../lib/mmseqs/lib/simd
     ${CMAKE_SOURCE_DIR}/../lib/mmseqs/lib/alp
+    ${CMAKE_SOURCE_DIR}/../lib/mmseqs/lib/zstd/lib
     ${CMAKE_SOURCE_DIR}/../lib/kerasify
     ${CMAKE_SOURCE_DIR}/../lib/pulchra
     ${CMAKE_SOURCE_DIR}/../lib/tmalign
