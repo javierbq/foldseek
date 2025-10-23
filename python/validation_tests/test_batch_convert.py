@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """
 Test script for batch_convert functionality
-Tests the fix for the segfault issue when loading multiple structures
+
+NOTE: batch_convert was REMOVED from pyfoldseek due to unresolved segfault
+issues when loading multiple structures in the same session. The root cause
+is in the underlying gemmi library.
+
+This test file is kept for documentation purposes and demonstrates the issue.
+The tests will skip/fail since batch_convert no longer exists.
+
+WORKAROUND: Load structures in separate Python processes or one at a time.
 """
 
 import sys
@@ -12,7 +20,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 try:
     import pyfoldseek
-    from pyfoldseek import Structure, batch_convert
+    from pyfoldseek import Structure
+    # batch_convert is no longer available
+    batch_convert = None
 except ImportError as e:
     print(f"ERROR: Could not import pyfoldseek: {e}")
     print("Please build the package first using: pip install -e .")
@@ -93,10 +103,14 @@ def test_multiple_structures_sequential():
 
 
 def test_batch_convert():
-    """Test the batch_convert function"""
+    """Test the batch_convert function (REMOVED - will skip)"""
     print("\n" + "=" * 60)
-    print("Test 3: Using batch_convert function")
+    print("Test 3: Using batch_convert function (REMOVED)")
     print("=" * 60)
+
+    if batch_convert is None:
+        print("SKIP: batch_convert was removed due to segfault issues")
+        return False
 
     # Try multiple possible locations
     test_file_names = ["1tim.pdb.gz", "8tim.pdb.gz"]
@@ -131,10 +145,14 @@ def test_batch_convert():
 
 
 def test_batch_convert_many_files():
-    """Test batch_convert with more files"""
+    """Test batch_convert with more files (REMOVED - will skip)"""
     print("\n" + "=" * 60)
-    print("Test 4: batch_convert with multiple different files")
+    print("Test 4: batch_convert with multiple different files (REMOVED)")
     print("=" * 60)
+
+    if batch_convert is None:
+        print("SKIP: batch_convert was removed due to segfault issues")
+        return False
 
     # Try to find PDB files in example directory
     test_dirs = ["../../example/", "../example/", "/home/user/foldseek/example/"]
@@ -172,8 +190,14 @@ def test_batch_convert_many_files():
 
 def main():
     """Run all tests"""
-    print("Testing batch_convert functionality")
-    print("This validates the fix for the segfault issue\n")
+    print("=" * 60)
+    print("WARNING: batch_convert has been REMOVED")
+    print("=" * 60)
+    print("batch_convert was removed from pyfoldseek due to unresolved")
+    print("segfault issues in the underlying gemmi library.")
+    print("\nWorkaround: Load structures in separate processes or one at a time.")
+    print("=" * 60)
+    print("\nTesting remaining functionality...\n")
 
     tests = [
         test_single_structure,

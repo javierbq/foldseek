@@ -306,35 +306,9 @@ private:
     std::vector<PyFeature> features_;
 };
 
-// Batch processing function - returns Python list directly
-py::list batch_convert(const std::vector<std::string>& filenames,
-                       bool reconstruct_backbone = false,
-                       int num_threads = 1) {
-    py::list results;
-
-    // Release GIL for parallel processing
-    py::gil_scoped_release release;
-
-    // Process each file - directly instantiate PyStructure to avoid Python callback
-    // TODO: Add OpenMP parallelization matching foldseek's threading
-    for (size_t i = 0; i < filenames.size(); i++) {
-        const auto& filename = filenames[i];
-        try {
-            // Reacquire GIL to create Python objects
-            py::gil_scoped_acquire acquire;
-
-            // Directly call from_file method (this creates a new GemmiWrapper for each file)
-            PyStructure struct_obj = PyStructure::from_file(filename, reconstruct_backbone, false, -1);
-            results.append(struct_obj);
-        } catch (const std::exception& e) {
-            // Log error but continue processing
-            py::gil_scoped_acquire acquire;
-            std::cerr << "Error processing " << filename << ": " << e.what() << std::endl;
-        }
-    }
-
-    return results;
-}
+// NOTE: batch_convert was removed due to segfault issues when loading multiple
+// structures in the same session. The issue is in the underlying gemmi library.
+// Workaround: Load structures in separate Python processes or one at a time.
 
 // Standalone function: convert coordinates to 3Di
 std::string coords_to_3di(py::array_t<double> ca,
@@ -498,32 +472,8 @@ void init_structure(py::module &m) {
             return py::make_iterator(s.get_chains().begin(), s.get_chains().end());
         }, py::keep_alive<0, 1>(), "Iterate over chains");
 
-    // Batch processing function
-    m.def("batch_convert", &batch_convert,
-          py::arg("filenames"),
-          py::arg("reconstruct_backbone") = false,
-          py::arg("num_threads") = 1,
-          R"pbdoc(
-        Convert multiple structure files to 3Di in batch.
-
-        Parameters
-        ----------
-        filenames : List[str]
-            List of file paths to convert
-        reconstruct_backbone : bool, optional
-            Reconstruct backbone atoms (default: False)
-        num_threads : int, optional
-            Number of threads for parallel processing (default: 1)
-
-        Returns
-        -------
-        List[Structure]
-            List of loaded structures
-
-        Examples
-        --------
-        >>> structures = batch_convert(["p1.pdb", "p2.pdb", "p3.pdb"], num_threads=4)
-    )pbdoc");
+    // NOTE: batch_convert was removed due to segfault issues when loading
+    // multiple structures. Use separate processes or load one at a time.
 
     // Standalone coordinate conversion function
     m.def("coords_to_3di", &coords_to_3di,

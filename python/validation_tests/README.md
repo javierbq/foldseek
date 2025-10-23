@@ -2,8 +2,8 @@
 
 This directory contains validation test scripts for the Python bindings, specifically testing:
 
-1. **batch_convert functionality** - Tests the fix for the segfault issue when loading multiple structures
-2. **LDDT calculation** - Tests the newly implemented LDDT (Local Distance Difference Test) functionality
+1. **batch_convert functionality** - ⚠️ **REMOVED** - Documents the segfault issue (batch_convert was removed from the API)
+2. **LDDT calculation** - ✅ Tests the newly implemented LDDT (Local Distance Difference Test) functionality
 
 ## Running the Tests
 
@@ -18,9 +18,9 @@ pip install -e .
 
 ### Test Scripts
 
-#### 1. Test batch_convert (Priority 2)
+#### 1. Test batch_convert (Priority 2) - ⚠️ REMOVED
 
-This tests the fix for the critical segfault issue when loading multiple structures:
+**NOTE**: `batch_convert()` was **removed** from pyfoldseek due to unresolved segfault issues in the underlying gemmi library.
 
 ```bash
 cd /home/user/foldseek/python/validation_tests
@@ -28,15 +28,16 @@ python test_batch_convert.py
 ```
 
 **What it tests:**
-- Loading a single structure (baseline)
-- Loading multiple structures sequentially (the problematic case)
-- Using the `batch_convert()` function with multiple files
-- Batch processing with many files
+- Loading a single structure (✅ works)
+- Loading multiple structures sequentially (❌ causes segfault - this is why batch_convert was removed)
+- Documents the issue for reference
 
 **Expected behavior:**
-- All tests should pass without segfaults
-- Multiple structures can be loaded in the same Python session
-- The `batch_convert()` function processes all files successfully
+- Single structure loading works perfectly
+- Multiple structure loading tests are skipped (batch_convert removed)
+- Demonstrates why the function was removed
+
+**Workaround**: Use separate Python processes for multiple files (see test file for example)
 
 #### 2. Test LDDT Calculation (Priority 3)
 
@@ -86,17 +87,20 @@ The tests use files from the `data/test/` directory in the foldseek repository. 
 
 ## Understanding the Fixes
 
-### Fix 1: batch_convert Segfault
+### Fix 1: batch_convert Segfault - RESOLUTION: REMOVED
 
-**Root Cause:** The original `batch_convert()` function tried to call back into Python from C++, causing issues with the Python/C++ boundary and GemmiWrapper state management.
+**Root Cause:** Segfault in the underlying gemmi library when loading multiple structures in the same session. Multiple fix attempts were unsuccessful:
+- Tried fixing Python callback issues
+- Tried proper GIL management
+- Tried creating fresh GemmiWrapper instances
+- Issue persists in gemmi library itself
 
-**Solution:** Modified `batch_convert()` in `structure_wrapper.cpp` to:
-- Directly instantiate `PyStructure` objects in C++
-- Properly manage GIL (Global Interpreter Lock) for thread safety
-- Create a fresh `GemmiWrapper` instance for each file
+**Resolution:** **REMOVED `batch_convert()` from public API** to prevent users from encountering segfaults.
 
 **Files modified:**
-- `python/src/structure_wrapper.cpp` (lines 305-333)
+- `python/src/structure_wrapper.cpp`: Removed batch_convert function and binding
+- `python/pyfoldseek/__init__.py`: Removed from exports
+- Added comments explaining removal
 
 ### Fix 2: LDDT Calculation Implementation
 
@@ -113,9 +117,9 @@ The tests use files from the `data/test/` directory in the foldseek repository. 
 ## Success Criteria
 
 ### batch_convert tests:
-- ✅ No segfaults when loading multiple structures
-- ✅ batch_convert() successfully processes multiple files
-- ✅ Can load 5+ structures in a single Python session
+- ✅ Single structure loading works perfectly
+- ⚠️ batch_convert() removed from API (was causing segfaults)
+- ⚠️ Multiple structure loading requires workaround (separate processes)
 
 ### LDDT tests:
 - ✅ LDDT classes import successfully

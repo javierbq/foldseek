@@ -8,9 +8,10 @@ Main classes and functions:
 - Structure: Load and analyze protein structures
 - Chain: Individual chain within a structure
 - coords_to_3di: Convert coordinates to 3Di alphabet
-- batch_convert: Process multiple structures in parallel
 - TMaligner: TM-align structural alignment
 - compute_tmscore: Compute TM-score between structures
+- LDDTCalculator: LDDT structural similarity calculator
+- compute_lddt: Compute LDDT between structures
 
 Example usage:
     >>> from pyfoldseek import Structure
@@ -39,7 +40,6 @@ try:
         Chain,
         Vec3,
         coords_to_3di,
-        batch_convert,
         TMaligner,
         TMscoreResult,
         compute_tmscore,
@@ -60,7 +60,6 @@ __all__ = [
     "Chain",
     "Vec3",
     "coords_to_3di",
-    "batch_convert",
     "TMaligner",
     "TMscoreResult",
     "compute_tmscore",
