@@ -31,6 +31,8 @@ target_include_directories(pyfoldseek PRIVATE
     ${CMAKE_SOURCE_DIR}/../lib/mmseqs/src/alignment
     ${CMAKE_SOURCE_DIR}/../lib/mmseqs/lib
     ${CMAKE_SOURCE_DIR}/../lib/mmseqs/lib/simde
+    ${CMAKE_SOURCE_DIR}/../lib/mmseqs/lib/simd
+    ${CMAKE_SOURCE_DIR}/../lib/mmseqs/lib/alp
     ${CMAKE_SOURCE_DIR}/../lib/kerasify
     ${CMAKE_SOURCE_DIR}/../lib/pulchra
     ${CMAKE_SOURCE_DIR}/../lib/tmalign

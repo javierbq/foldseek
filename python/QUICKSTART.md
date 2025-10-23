@@ -93,21 +93,55 @@ seq_3di = coords_to_3di(ca, n, c, cb)
 print(f"3Di sequence: {seq_3di}")
 ```
 
-## Common Workflows
-
-### Workflow 1: Compare Two Structures
+### 6. Structural Alignment with TM-align
 
 ```python
-# Load two structures
-struct1 = Structure.from_file("protein1.pdb")
-struct2 = Structure.from_file("protein2.pdb")
+from pyfoldseek import Structure, compute_tmscore, TMaligner
 
-# Compare sequences
-print(f"Structure 1: {len(struct1.sequence)} residues")
-print(f"Structure 2: {len(struct2.sequence)} residues")
+# Load structures
+s1 = Structure.from_file("protein1.pdb")
 
-# Compare 3Di sequences (basic comparison)
-# For proper alignment, use external tools or future Phase 2 features
+# Quick TM-score computation (self-alignment)
+result = compute_tmscore(s1.ca_coords, s1.ca_coords, s1.sequence, s1.sequence)
+print(f"TM-score: {result.tmscore:.4f}")
+print(f"RMSD: {result.rmsd:.2f} Å")
+
+# Access transformation matrices
+print(f"Rotation matrix:\n{result.rotation_matrix}")
+print(f"Translation vector: {result.translation}")
+
+# Use TMaligner class for more control
+aligner = TMaligner(max_seq_len=10000, fast=True)
+result = aligner.align(s1.ca_coords, s1.ca_coords, s1.sequence, s1.sequence)
+print(f"TM-score: {result.tmscore:.4f}")
+```
+
+## Common Workflows
+
+### Workflow 1: Compare Two Structures with TM-align
+
+**Note**: Due to a known issue with loading multiple files in the same session,
+load structures in separate processes or use the same structure with perturbations.
+
+```python
+from pyfoldseek import Structure, compute_tmscore
+import numpy as np
+
+# Load structure
+s1 = Structure.from_file("protein1.pdb")
+print(f"Structure: {len(s1.sequence)} residues")
+
+# For demonstration: create a perturbed version
+# (In production, you'd load a different structure in a separate process)
+coords_perturbed = s1.ca_coords + np.random.randn(*s1.ca_coords.shape) * 0.5
+
+# Compute structural similarity
+result = compute_tmscore(s1.ca_coords, coords_perturbed, s1.sequence, s1.sequence)
+print(f"TM-score: {result.tmscore:.4f}")
+print(f"RMSD: {result.rmsd:.2f} Å")
+
+# Compare 3Di sequences
+print(f"3Di sequence: {s1.seq_3di[:50]}...")
 ```
 
 ### Workflow 2: Extract Chain from Complex

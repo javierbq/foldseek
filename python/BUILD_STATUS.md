@@ -23,6 +23,14 @@
 5. ✅ **Backward compatibility** - Phase 0 API unchanged and working
 6. ⚠️ **Batch processing** - Segfaults (memory issue, needs debugging)
 
+### Structural Alignment (Phase 2)
+1. ✅ **TM-align** - Structural alignment algorithm implementation
+2. ✅ **TMaligner class** - Full-featured alignment class
+3. ✅ **compute_tmscore()** - Convenience function for quick alignments
+4. ✅ **TMscoreResult** - Result object with TM-score, RMSD, rotation, translation
+5. ✅ **NumPy integration** - Seamless coordinate array handling
+6. ⚠️ **TM-score values** - May need normalization parameter adjustment
+
 ---
 
 ## 📊 Test Results
@@ -55,6 +63,21 @@ chain = struct.get_chain(0)
 print(chain.sequence)       # ✓ Works
 print(chain.seq_3di)        # ✓ Works
 print(chain.ca_coords)      # ✓ Works
+
+# TM-align structural alignment
+from pyfoldseek import compute_tmscore, TMaligner
+s1 = pyfoldseek.Structure.from_file("protein1.pdb")
+result = compute_tmscore(s1.ca_coords, s1.ca_coords, s1.sequence, s1.sequence)
+print(f"TM-score: {result.tmscore}")      # ✓ Works
+print(f"RMSD: {result.rmsd}")             # ✓ Works
+print(result.rotation_matrix)              # ✓ (3,3) array
+print(result.translation)                  # ✓ (3,) array
+# ✓ Works!
+
+# TMaligner class
+aligner = TMaligner(max_seq_len=10000, fast=True)
+result = aligner.align(s1.ca_coords, s1.ca_coords, s1.sequence, s1.sequence)
+# ✓ Works!
 ```
 
 ### Known Issues

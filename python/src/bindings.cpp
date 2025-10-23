@@ -1,5 +1,6 @@
 #include <pybind11/pybind11.h>
 #include <vector>
+#include "GemmiWrapper.h"
 
 namespace py = pybind11;
 
@@ -26,6 +27,13 @@ void (*initCommands)(void) = nullptr;
 // for the Python bindings (we're not using the command system)
 void initParameterSingleton() {
     // No-op for Python bindings
+}
+
+// Stub implementation for missing GemmiWrapper::nextChain()
+// This method is declared in GemmiWrapper.h but never defined in foldseek
+// We provide a stub since we don't use this functionality
+std::pair<size_t, size_t> GemmiWrapper::nextChain() {
+    return std::make_pair(0, 0);
 }
 
 // Forward declarations of init functions from other files
