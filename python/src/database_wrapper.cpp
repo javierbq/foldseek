@@ -3,6 +3,7 @@
 #include <pybind11/stl.h>
 #include <string>
 #include <vector>
+#include <memory>
 #include <stdexcept>
 
 // IMPORTANT: Redefine EXIT macro to throw exception instead of calling exit()
@@ -381,12 +382,13 @@ std::vector<PySearchHit> search(
         throw std::invalid_argument("query_sequence length must match query_ca length");
     }
 
-    // Convert query coordinates to separate x, y, z arrays
+    // Allocate query coordinate arrays (must persist for TMaligner lifetime)
+    // Using unique_ptr for RAII and exception safety
     auto query_buf = query_ca.unchecked<2>();
-    float* query_x = new float[query_len];
-    float* query_y = new float[query_len];
-    float* query_z = new float[query_len];
-    char* query_seq_arr = new char[query_len + 1];
+    std::unique_ptr<float[]> query_x(new float[query_len]);
+    std::unique_ptr<float[]> query_y(new float[query_len]);
+    std::unique_ptr<float[]> query_z(new float[query_len]);
+    std::unique_ptr<char[]> query_seq_arr(new char[query_len + 1]);
 
     for (size_t i = 0; i < query_len; i++) {
         query_x[i] = query_buf(i, 0);
@@ -396,19 +398,28 @@ std::vector<PySearchHit> search(
     }
     query_seq_arr[query_len] = '\0';
 
-    // Create TM-aligner (estimate max length as 2x query)
-    size_t max_len = query_len * 2;
-    if (max_len < 1000) max_len = 1000;
-    TMaligner tmaligner(max_len, true, false, false);
+    // Create TM-aligner with max length large enough for query and all database entries
+    // Scan database to find maximum length
+    size_t max_len = query_len;
+    size_t db_size = database.size();
+    for (size_t i = 0; i < db_size; i++) {
+        PyDatabaseEntry entry = database.get_by_index(i);
+        size_t entry_len = entry.get_length();
+        if (entry_len > max_len) {
+            max_len = entry_len;
+        }
+    }
+    // Add some buffer
+    max_len = max_len + 100;
+    std::unique_ptr<TMaligner> tmaligner(new TMaligner(max_len, true, false, false));
 
-    // Initialize query (once before loop)
-    tmaligner.initQuery(query_x, query_y, query_z, query_seq_arr, query_len);
+    // Initialize query once (following working pattern from alignment_wrapper.cpp)
+    tmaligner->initQuery(query_x.get(), query_y.get(), query_z.get(), query_seq_arr.get(), query_len);
 
     // Results vector
     std::vector<PySearchHit> hits;
 
     // Iterate over database
-    size_t db_size = database.size();
     for (size_t i = 0; i < db_size; i++) {
         // Get database entry
         PyDatabaseEntry entry = database.get_by_index(i);
@@ -422,6 +433,7 @@ std::vector<PySearchHit> search(
         size_t target_len = target_ca.shape(0);
 
         // Convert target coordinates to separate x, y, z arrays
+        // Use raw pointers to exactly match working pattern from alignment_wrapper.cpp
         auto target_buf = target_ca.unchecked<2>();
         float* target_x = new float[target_len];
         float* target_y = new float[target_len];
@@ -432,14 +444,14 @@ std::vector<PySearchHit> search(
             target_x[j] = target_buf(j, 0);
             target_y[j] = target_buf(j, 1);
             target_z[j] = target_buf(j, 2);
+            target_seq_arr[j] = entry.get_sequence()[j];
         }
-        std::copy(entry.get_sequence().begin(), entry.get_sequence().end(), target_seq_arr);
         target_seq_arr[target_len] = '\0';
 
         try {
             // Perform TM-align
             float tm_score_value;
-            Matcher::result_t aln_result = tmaligner.align(
+            Matcher::result_t aln_result = tmaligner->align(
                 entry.get_key(),
                 target_x, target_y, target_z,
                 target_seq_arr,
@@ -455,7 +467,7 @@ std::vector<PySearchHit> search(
 
                 if (query_cov >= coverage_threshold && target_cov >= coverage_threshold) {
                     // Get TM-score result for RMSD
-                    TMaligner::TMscoreResult tm_result = tmaligner.computeTMscore(
+                    TMaligner::TMscoreResult tm_result = tmaligner->computeTMscore(
                         target_x, target_y, target_z,
                         target_len,
                         aln_result.qStartPos,
@@ -478,10 +490,10 @@ std::vector<PySearchHit> search(
                 }
             }
         } catch (const std::exception& e) {
-            // Skip entries that fail alignment, but still clean up
+            // Skip entries that fail alignment
         }
 
-        // Clean up target arrays (always executed)
+        // Clean up target arrays
         delete[] target_x;
         delete[] target_y;
         delete[] target_z;
@@ -498,12 +510,7 @@ std::vector<PySearchHit> search(
         hits.resize(max_hits);
     }
 
-    // Clean up query arrays
-    delete[] query_x;
-    delete[] query_y;
-    delete[] query_z;
-    delete[] query_seq_arr;
-
+    // Query arrays automatically cleaned up by unique_ptr
     return hits;
 }
 
