@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=42", "wheel", "pybind11>=2.10.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyfoldseek"
+version = "0.1.0"
+description = "Python bindings for Foldseek structural search"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+authors = [
+    {name = "Foldseek Team"}
+]
+keywords = ["bioinformatics", "protein", "structure", "alignment", "3Di"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = [
+    "numpy>=1.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov",
+    "black",
+    "flake8",
+]
+
+[project.urls]
+Homepage = "https://github.com/steineggerlab/foldseek"
+Documentation = "https://github.com/steineggerlab/foldseek/tree/master/python"
+Repository = "https://github.com/steineggerlab/foldseek"
+Issues = "https://github.com/steineggerlab/foldseek/issues"
+
+[tool.black]
+line-length = 88
+target-version = ['py37', 'py38', 'py39', 'py310', 'py311']
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=pyfoldseek --cov-report=term-missing"

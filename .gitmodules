@@ -9,3 +9,6 @@
 [submodule "regression"]
 	path = regression
 	url = https://github.com/steineggerlab/foldseek-regression
+[submodule "lib/pybind11"]
+	path = lib/pybind11
+	url = https://github.com/pybind/pybind11.git
