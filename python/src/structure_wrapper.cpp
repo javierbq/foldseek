@@ -131,7 +131,11 @@ public:
 
         // Process chains
         PulchraWrapper pulchra;
-        StructureTo3Di converter;
+
+        // Use a static converter to avoid reloading the neural network model
+        // The StructureTo3Di constructor loads a neural network model, which
+        // can cause issues if created multiple times
+        static StructureTo3Di converter;
 
         // Iterate over all chains in the structure
         for (size_t chain_count = 0; chain_count < gemmi.chain.size(); chain_count++) {
@@ -298,18 +302,21 @@ private:
     std::vector<PyFeature> features_;
 };
 
-// Batch processing function
-std::vector<PyStructure> batch_convert(const std::vector<std::string>& filenames,
-                                        bool reconstruct_backbone = false,
-                                        int num_threads = 1) {
-    std::vector<PyStructure> results;
-    results.reserve(filenames.size());
+// Batch processing function - returns Python list directly
+py::list batch_convert(const std::vector<std::string>& filenames,
+                       bool reconstruct_backbone = false,
+                       int num_threads = 1) {
+    py::list results;
 
-    // For now, sequential processing
+    // Process each file sequentially
     // TODO: Add OpenMP parallelization matching foldseek's threading
-    for (const auto& filename : filenames) {
+    for (size_t i = 0; i < filenames.size(); i++) {
+        const auto& filename = filenames[i];
         try {
-            results.push_back(PyStructure::from_file(filename, reconstruct_backbone));
+            // Call the static method through Python to avoid C++ copy issues
+            py::object Structure = py::module_::import("pyfoldseek").attr("Structure");
+            py::object struct_obj = Structure.attr("from_file")(filename, reconstruct_backbone);
+            results.append(struct_obj);
         } catch (const std::exception& e) {
             // Log error but continue processing
             std::cerr << "Error processing " << filename << ": " << e.what() << std::endl;
@@ -358,8 +365,8 @@ std::string coords_to_3di(py::array_t<double> ca,
         cb_vec[i] = Vec3(cb_r(i, 0), cb_r(i, 1), cb_r(i, 2));
     }
 
-    // Compute 3Di
-    StructureTo3Di converter;
+    // Compute 3Di using static converter
+    static StructureTo3Di converter;
     char* states = converter.structure2states(
         ca_vec.data(), n_vec.data(), c_vec.data(), cb_vec.data(), len
     );

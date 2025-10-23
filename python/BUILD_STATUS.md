@@ -221,7 +221,10 @@ struct_fcz = Structure.from_foldcomp("protein.fcz")
 
 ## 🚧 Known Limitations
 
-1. ⚠️ **batch_convert()** - Segfaults due to memory issue
+1. ❌ **Multiple file loading** - Segfaults when loading second structure (see KNOWN_ISSUES.md)
+   - Root cause: Under investigation (suspected GemmiWrapper or gemmi library state)
+   - Workaround: Use separate Python processes for multiple files
+   - Impact: batch_convert() doesn't work, single files work perfectly
 2. 📝 **Intermediate features** - Not tested yet (compute_features=True)
 3. 📝 **Backbone reconstruction** - Not tested yet (reconstruct_backbone=True)
 4. 📝 **Phase 2 features** - Not implemented (TM-align, scoring, etc.)
