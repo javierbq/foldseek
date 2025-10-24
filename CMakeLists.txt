@@ -6,6 +6,9 @@ cmake_policy(SET CMP0074 NEW)
 project(foldseek C CXX)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lib/mmseqs/cmake")
 
+# Enable Position Independent Code for Python bindings
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 set(ENABLE_PROSTT5 1 CACHE BOOL "Enable ProstT5")
 set(ENABLE_CUDA 0 CACHE BOOL "Enable CUDA")
 set(IGNORE_RUST_VERSION 0 CACHE BOOL "Ignore Rust version check")

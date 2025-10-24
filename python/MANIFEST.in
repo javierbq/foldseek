@@ -1,0 +1,6 @@
+include README.md
+include LICENSE
+include pyproject.toml
+recursive-include src *.cpp *.h
+recursive-include pyfoldseek *.py
+include CMakeLists.txt
