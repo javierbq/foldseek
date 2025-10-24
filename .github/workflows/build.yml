@@ -1,0 +1,336 @@
+name: Build and Test
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+env:
+  REGRESSION: 1
+
+jobs:
+  build-ubuntu:
+    name: Build Ubuntu - ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: AVX2
+            simd: AVX2
+            static: 1
+            mpi: 0
+            build_type: Release
+          - name: SSE4.1
+            simd: SSE4_1
+            static: 1
+            mpi: 0
+            build_type: Release
+          # - name: SSE2
+          #   simd: SSE2
+          #   static: 1
+          #   mpi: 0
+          #   build_type: RelWithDebInfo
+          - name: AVX2-MPI
+            simd: AVX2
+            static: 0
+            mpi: 1
+            build_type: Release
+          - name: ASan
+            simd: AVX2
+            static: 0
+            mpi: 0
+            build_type: ASanOpt
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install newer GCC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-11 g++-11 libgcc-11-dev rustc cargo build-essential
+
+      - name: Install MPI Dependencies
+        if: matrix.mpi == 1
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install mpi-default-dev mpi-default-bin
+
+      - name: Build foldseek
+        run: |
+          mkdir build && cd build
+          export CC=gcc-11 ; export CXX=g++-11
+          if [ "${{ matrix.static }}" -eq "1" ]; then
+            LIBGOMP=/usr/lib/gcc/x86_64-linux-gnu/11
+            cmake -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DFORCE_STATIC_DEPS=1 \
+              -DOpenMP_C_FLAGS="-fopenmp -I${LIBGOMP}" -DOpenMP_C_LIB_NAMES=gomp -DOpenMP_CXX_FLAGS="-fopenmp -I${LIBGOMP}" -DOpenMP_CXX_LIB_NAMES=gomp -DOpenMP_gomp_LIBRARY=${LIBGOMP}/libgomp.a \
+              -DENABLE_WERROR=1 -DHAVE_${{ matrix.simd }}=1 -DHAVE_MPI=${{ matrix.mpi }} ..
+          else
+            cmake -DHAVE_SANITIZER=1 -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+              -DENABLE_WERROR=1 -DHAVE_${{ matrix.simd }}=1 -DHAVE_MPI=${{ matrix.mpi }} ..
+          fi
+          make -j $(nproc --all) VERBOSE=1
+
+      - name: Run Regression Suite
+        if: env.REGRESSION == 1
+        run: |
+          if [ "${{ matrix.simd }}" = "SSE2" ]; then
+            export SKIP_PROSTT5=1
+          fi
+          ./regression/run_regression.sh ./build/src/foldseek examples
+
+      - name: Upload artifact
+        if: matrix.static == 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: foldseek-linux-${{ matrix.simd }}
+          path: build/src/foldseek
+          retention-days: 1
+
+  build-ubuntu-gpu:
+    name: Build Ubuntu GPU - ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            dockerfile: .github/workflows/Dockerfile.GPU-manylinux2014
+          - arch: aarch64
+            dockerfile: .github/workflows/Dockerfile.GPU-buster-cross-sbsa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Build Docker image and extract binary
+        run: |
+          mkdir -p output
+          docker build -t manylinux-builder -f ${{ matrix.dockerfile }} .
+          docker run --rm \
+            -v $(pwd)/output:/output \
+            manylinux-builder \
+            /bin/bash -c "cp /work/build/src/foldseek /output/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: foldseek-linux-gpu-${{ matrix.arch }}
+          path: output/foldseek
+          retention-days: 1
+
+  build-ubuntu-cross:
+    name: Build Cross-Compile - ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ARM64
+            simd: ARM8
+            arch: arm64
+            cpref: aarch64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Toolchain
+        run: |
+          CODENAME=$(lsb_release -cs)
+          sudo dpkg --add-architecture "${{ matrix.arch }}"
+          cat << HEREDOC | sudo tee /etc/apt/sources.list
+          deb [arch=amd64,i386] http://archive.ubuntu.com/ubuntu/ ${CODENAME} main universe multiverse
+          deb [arch=amd64,i386] http://archive.ubuntu.com/ubuntu/ ${CODENAME}-updates main universe multiverse
+          deb [arch=amd64,i386] http://archive.ubuntu.com/ubuntu/ ${CODENAME}-backports main universe multiverse
+          deb [arch=amd64,i386] http://security.ubuntu.com/ubuntu/ ${CODENAME}-security main universe multiverse
+          deb [arch=${{ matrix.arch }}] http://ports.ubuntu.com/ubuntu-ports/ ${CODENAME} main universe multiverse
+          deb [arch=${{ matrix.arch }}] http://ports.ubuntu.com/ubuntu-ports/ ${CODENAME}-updates main universe multiverse
+          deb [arch=${{ matrix.arch }}] http://ports.ubuntu.com/ubuntu-ports/ ${CODENAME}-backports main universe multiverse
+          deb [arch=${{ matrix.arch }}] http://ports.ubuntu.com/ubuntu-ports/ ${CODENAME}-security main universe multiverse
+          HEREDOC
+          sudo apt-get update
+          sudo apt-get -y install -o APT::Immediate-Configure=false crossbuild-essential-${{ matrix.arch }} zlib1g-dev:${{ matrix.arch }} libbz2-dev:${{ matrix.arch }}
+          rustup target add ${{ matrix.cpref }}-unknown-linux-gnu
+
+      - name: Build foldseek
+        run: |
+          mkdir build && cd build
+          LIBGOMP=/usr/lib/gcc-cross/${{ matrix.cpref }}-linux-gnu/11
+          CC=${{ matrix.cpref }}-linux-gnu-gcc CXX=${{ matrix.cpref }}-linux-gnu-g++ \
+           cmake -DCMAKE_BUILD_TYPE=Release -DHAVE_TESTS=1 -DFORCE_STATIC_DEPS=1 \
+            -DRust_CARGO_TARGET=${{ matrix.cpref }}-unknown-linux-gnu \
+            -DOpenMP_C_FLAGS="-fopenmp -I${LIBGOMP}" -DOpenMP_C_LIB_NAMES=gomp -DOpenMP_CXX_FLAGS="-fopenmp -I${LIBGOMP}" -DOpenMP_CXX_LIB_NAMES=gomp -DOpenMP_gomp_LIBRARY=${LIBGOMP}/libgomp.a \
+            -DENABLE_WERROR=1 -DHAVE_${{ matrix.simd }}=1 ..
+          make -j $(nproc --all)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: foldseek-linux-${{ matrix.simd }}
+          path: build/src/foldseek
+          retention-days: 1
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Rust Toolchain
+        run: |
+          rustup update
+          rustup target install x86_64-apple-darwin
+          rustup target install aarch64-apple-darwin
+
+      - name: Build foldseek
+        run: |
+          ./util/build_osx.sh . build foldseek
+
+      - name: Run Regression Suite
+        if: env.REGRESSION == 1
+        run: |
+          ./regression/run_regression.sh ./build/foldseek examples
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: foldseek-darwin-universal
+          path: build/foldseek
+          retention-days: 1
+
+  upload-artifacts:
+    name: Upload Artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs:
+      - build-macos
+      - build-ubuntu
+      - build-ubuntu-cross
+      - build-ubuntu-gpu
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Prepare directory structure
+        run: |
+          mkdir foldseek
+          cp -f README.md LICENCE.md foldseek
+          mkdir foldseek/bin
+
+      # macOS universal
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: foldseek-darwin-universal
+          path: foldseek/bin
+
+      - name: Create macOS archive
+        run: |
+          chmod +x foldseek/bin/foldseek
+          tar czf foldseek-osx-universal.tar.gz foldseek
+
+      # Linux GPU x86_64
+      - name: Download Linux GPU x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: foldseek-linux-gpu-x86_64
+          path: foldseek/bin
+
+      - name: Create Linux GPU archive
+        run: |
+          chmod +x foldseek/bin/foldseek
+          tar czf foldseek-linux-gpu.tar.gz foldseek
+
+      # Linux GPU aarch64
+      - name: Download Linux GPU aarch64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: foldseek-linux-gpu-aarch64
+          path: foldseek/bin
+
+      - name: Create Linux GPU ARM64 archive
+        run: |
+          chmod +x foldseek/bin/foldseek
+          tar czf foldseek-linux-gpu-arm64.tar.gz foldseek
+
+      # Linux SSE4.1
+      - name: Download Linux SSE4.1 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: foldseek-linux-SSE4_1
+          path: foldseek/bin
+
+      - name: Create Linux SSE4.1 archive
+        run: |
+          chmod +x foldseek/bin/foldseek
+          tar czf foldseek-linux-sse41.tar.gz foldseek
+
+      # Linux AVX2
+      - name: Download Linux AVX2 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: foldseek-linux-AVX2
+          path: foldseek/bin
+
+      - name: Create Linux AVX2 archive
+        run: |
+          chmod +x foldseek/bin/foldseek
+          tar czf foldseek-linux-avx2.tar.gz foldseek
+
+      # Linux ARM64
+      - name: Download Linux ARM64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: foldseek-linux-ARM8
+          path: foldseek/bin
+
+      - name: Create Linux ARM64 archive
+        run: |
+          chmod +x foldseek/bin/foldseek
+          tar czf foldseek-linux-arm64.tar.gz foldseek
+
+      # Sign and upload
+      - name: Get Deployment Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_rsa
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keygen -f ~/.ssh/id_rsa -y > ~/.ssh/id_rsa.pub
+
+      - name: Sign and upload artifacts
+        run: |
+          # Sign all artifacts
+          ssh-keygen -Y sign -f ~/.ssh/id_rsa -n file \
+             foldseek-osx-universal.tar.gz \
+             foldseek-linux-sse41.tar.gz \
+             foldseek-linux-avx2.tar.gz \
+             foldseek-linux-gpu.tar.gz \
+             foldseek-linux-gpu-arm64.tar.gz \
+             foldseek-linux-arm64.tar.gz
+
+          # Upload to mmseqs.com
+          curl --fail --retry 5 --retry-all-errors -X POST \
+            -F file[]=@foldseek-osx-universal.tar.gz -F signature[]=@foldseek-osx-universal.tar.gz.sig \
+            -F file[]=@foldseek-linux-sse41.tar.gz -F signature[]=@foldseek-linux-sse41.tar.gz.sig \
+            -F file[]=@foldseek-linux-avx2.tar.gz -F signature[]=@foldseek-linux-avx2.tar.gz.sig \
+            -F file[]=@foldseek-linux-gpu.tar.gz -F signature[]=@foldseek-linux-gpu.tar.gz.sig \
+            -F file[]=@foldseek-linux-gpu-arm64.tar.gz -F signature[]=@foldseek-linux-gpu-arm64.tar.gz.sig \
+            -F file[]=@foldseek-linux-arm64.tar.gz -F signature[]=@foldseek-linux-arm64.tar.gz.sig \
+            -F identifier="foldseek" -F directory="${{ github.sha }}" \
+              https://mmseqs.com/upload
